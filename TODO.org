@@ -1,0 +1,51 @@
+* TODO Feeley interpreter
+** TODO special forms
+*** DONE =block=
+*** DONE =catch=
+*** DONE =eval-when=
+*** DONE =flet=
+*** DONE =function=
+*** DONE =if=
+*** DONE =labels=
+*** DONE =lambda=
+*** DONE =let=
+*** DONE =let*=
+*** DONE =multiple-value-call=
+*** DONE =multiple-value-prog1=
+*** DONE =multiple-value-setq=
+*** DONE =multiple-value-bind=
+*** DONE =progn=
+*** DONE =progv=
+*** DONE =quote=
+*** DONE =return-from=
+*** DONE =setq=
+*** DONE =the=
+*** DONE =throw=
+*** DONE =unwind-protect=
+*** DONE =sb!ext:truly-the=
+*** DONE =named-lambda=  (/more or less done/)
+*** Batch 2:
+*** DONE =symbol-macrolet=
+*** DONE =go=
+*** DONE =tagbody=
+*** DONE =macrolet=
+*** TODO XXX =declare=
+*** TODO (=locally=)
+** TODO Declaration parsing
+** TODO variables/local functions
+*** TODO specials
+*** DONE lexicals
+*** DONE functions
+** TODO macro expansion
+*** TODO local
+**** Need to fix lambda lists.
+**** Hmm.  Does the environment stuff work?
+*** TODO global
+**** Need to transform PREPARE-FORM contexts into native environments.
+** TODO definition?
+*** =defun=
+*** =defmacro=
+*** =defvar=
+*** =defparameter=
+*** =defconstant=
+** TODO partial evaluation
