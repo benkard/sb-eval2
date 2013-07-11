@@ -93,8 +93,12 @@
     new-context))
 
 (defun prepare-ref (var context)
-  (declare (ignore context))
-  (lambda (env) (cdr (assoc var (environment-variables env) :test #'eq))))
+  (if (context-var-lexical-p context var)
+      (lambda (env)
+        (cdr (assoc var (environment-variables env) :test #'eq)))
+      (lambda (env)
+        (declare (ignore env))
+        (symbol-value var))))
 
 (defun prepare-function-ref (f context)
   (declare (ignore context))
