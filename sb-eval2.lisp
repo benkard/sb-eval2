@@ -422,6 +422,19 @@
    t))
 
 
+(defun eval (form)
+  (funcall (prepare-form form) (make-null-environment)))
+
+
+(defun load (filename)
+  ;;FIXME: set :LOAD-TOPLEVEL time.
+  (let ((eof (gensym)))
+    (with-open-file (in filename)
+      (loop for form = (read in nil eof nil)
+            until (eq form eof)
+            do (eval form)))))
+
+
 #+(or)
 (funcall (prepare-form '(funcall
                          (funcall
