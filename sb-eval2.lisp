@@ -301,7 +301,7 @@
                 (lambda (env)
                   (multiple-value-prog1
                       (funcall values-form* env)
-                    (funcall body*))))))
+                    (funcall body* env))))))
            ((multiple-value-setq)
             (destructuring-bind (vars values-form) (rest form)
               (let ((values-form* (prepare-form values-form context)))
