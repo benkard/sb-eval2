@@ -32,9 +32,13 @@
 (defun make-null-context ()
   (%make-context :block-tags nil))
 (defun make-context (parent-context)
-  (with-slots (block-tags)
+  (with-slots (block-tags go-tags symbol-macros macros lexicals)
       parent-context
-    (%make-context :block-tags block-tags)))
+    (%make-context :block-tags block-tags
+                   :go-tags go-tags
+                   :symbol-macros symbol-macros
+                   :macros macros
+                   :lexicals lexicals)))
 (defun context-add-block-tag (context block tag)
   (let ((new-context (make-context context)))
     (with-slots (block-tags)
@@ -274,7 +278,7 @@
                                       (more (prepare-let* rest-bindings new-context)))
                                  (lambda (env)
                                    (let ((new-env (make-environment env)))
-                                     (push `(,var . ,val) (environment-variables new-env))
+                                     (push `(,var . ,(funcall val env)) (environment-variables new-env))
                                      (funcall more new-env))))))))
                 (prepare-let* bindings context))))
            ((locally)
