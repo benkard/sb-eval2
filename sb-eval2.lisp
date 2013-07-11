@@ -83,14 +83,14 @@
                (cons tag forms)))))
 (defun context-var-lexical-p (context var)
   (member var (context-lexicals context)))
-(defun context-add-lexical (context var)
-  (context-add-lexicals context (list var)))
 (defun context-add-lexicals (context vars)
   (let ((new-context (make-context context)))
     (with-slots (lexicals)
         new-context
       (setq lexicals (append vars lexicals)))
     new-context))
+(defun context-add-lexical (context var)
+  (context-add-lexicals context (list var)))
 
 (defun prepare-ref (var context)
   (if (context-var-lexical-p context var)
