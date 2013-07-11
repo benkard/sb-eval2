@@ -314,8 +314,9 @@
            ((multiple-value-bind)
             ;; FIXME: SPECIAL declarations!
             (destructuring-bind (vars value-form &body body) (rest form)
-              (let ((value-form* (prepare-form value-form context))
-                    (body*       (prepare-progn body context)))
+              (let* ((value-form* (prepare-form value-form context))
+                     (new-context (context-add-lexicals context vars))
+                     (body*       (prepare-progn body new-context)))
                 (lambda (env)
                   (let* ((new-env (make-environment env))
                          (values  (multiple-value-list (funcall value-form* env))))
