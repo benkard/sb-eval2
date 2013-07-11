@@ -1,5 +1,7 @@
 (defpackage "SB-EVAL2"
-  (:use "COMMON-LISP"))
+  (:use "COMMON-LISP")
+  (:shadow "EVAL" "LOAD")
+  (:export "EVAL" "LOAD"))
 
 (in-package "SB-EVAL2")
 
@@ -25,7 +27,8 @@
   block-tags
   go-tags
   symbol-macros
-  macros)
+  macros
+  lexicals)
 (defun make-null-context ()
   (%make-context :block-tags nil))
 (defun make-context (parent-context)
@@ -74,6 +77,16 @@
                (unless forms
                  (setq finishp t))
                (cons tag forms)))))
+(defun context-var-lexical-p (context var)
+  (member var (context-lexicals context)))
+(defun context-add-lexical (context var)
+  (context-add-lexicals context (list var)))
+(defun context-add-lexicals (context vars)
+  (let ((new-context (make-context context)))
+    (with-slots (lexicals)
+        new-context
+      (setq lexicals (append vars lexicals)))
+    new-context))
 
 (defun prepare-ref (var context)
   (declare (ignore context))
@@ -107,7 +120,8 @@
 (defun prepare-lambda (lambda-form context)
   (destructuring-bind (lambda-list &rest body) lambda-form
     ;; FIXME: SPECIAL declarations!
-    (let ((body* (prepare-progn body context)))
+    (let* ((new-context (context-add-lexicals context lambda-list))
+           (body* (prepare-progn body new-context)))
       (lambda (env)
         (lambda (&rest args)
           ;; FIXME: non-simple lambda-lists
@@ -119,7 +133,8 @@
 
 (defun context->native-environment (context)
   ;;FIXME
-  context)
+  (declare (ignore context))
+  (sb-c::internal-make-lexenv nil nil nil nil nil nil nil nil nil nil nil))
 
 (defun prepare-form (form &optional (context (make-null-context)))
   ;;(declare (optimize speed (safety 0) (space 1) (debug 0)))
@@ -167,7 +182,12 @@
                 (lambda (env)
                   (loop with env-vars = (environment-variables env)
                         for (var val*) on bindings by #'cddr
-                        for result = (setf (cdr (assoc var env-vars)) (funcall val* env))
+                        for value = (funcall val* env)
+                        for result =
+                           (if ;XXX could lift the conditional out of the lambda
+                            (context-var-lexical-p context var)
+                            (setf (cdr (assoc var env-vars)) value)
+                            (setf (symbol-value var) value))
                         finally (return result))))))
            ((catch)
             (destructuring-bind (tag &body body) (rest form)
@@ -226,13 +246,14 @@
            ((let)
             ;; FIXME: SPECIAL declarations!
             (destructuring-bind (bindings &rest body) (rest form)
-              (let ((body* (prepare-progn body context))
-                    (bindings* (mapcar (lambda (form)
-                                         (if (listp form)
-                                             (cons (first form)
-                                                   (prepare-form (second form) context))
-                                             (cons form (prepare-nil))))
-                                       bindings)))
+              (let* ((bindings* (mapcar (lambda (form)
+                                          (if (listp form)
+                                              (cons (first form)
+                                                    (prepare-form (second form) context))
+                                              (cons form (prepare-nil))))
+                                        bindings))
+                     (new-context (context-add-lexicals context (mapcar #'first bindings*)))
+                     (body* (prepare-progn body new-context)))
                 (lambda (env)
                   (let ((new-env (make-environment env)))
                     (loop for (var . val) in bindings*
@@ -248,7 +269,8 @@
                              (destructuring-bind (binding . rest-bindings) bindings
                                (let* ((var  (if (listp binding) (first binding) binding))
                                       (val  (if (listp binding) (prepare-form (second binding) context) (prepare-nil)))
-                                      (new-context context)
+                                      
+                                      (new-context (context-add-lexical context var))
                                       (more (prepare-let* rest-bindings new-context)))
                                  (lambda (env)
                                    (let ((new-env (make-environment env)))
