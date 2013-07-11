@@ -106,8 +106,7 @@
     (let ((local-function-record (assoc f (environment-functions env) :test #'equal)))
       (if local-function-record
           (cdr local-function-record)
-          ;; Global functions can be called through their function names.
-          f))))
+          (fdefinition f)))))
 
 (defun prepare-nil ()
   (lambda (env) (declare (ignore env))))
@@ -177,8 +176,8 @@
                     (prepare-lambda (rest fun-form) context))
                    ((sb-int:named-lambda)
                     (prepare-lambda (cddr fun-form) context))
-                   ((setf
-                     (prepare-function-ref fun-form context))))))))
+                   ((setf)
+                    (prepare-function-ref fun-form context)))))))
            ((lambda)
             (prepare-lambda (rest form) context))
            ((setq)
