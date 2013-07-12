@@ -126,7 +126,14 @@
       (apply (the function (cdr (assoc f (environment-functions env) :test #'equal)))
              (mapcar (lambda (x) (funcall (the eval-closure x) env)) args*)))))
 
-(declaim (ftype (function (eval-closure list context) eval-closure) prepare-global-call))
+(declaim (ftype (function ((or symbol list) list context) eval-closure) prepare-global-call))
+(defun prepare-global-call (f args context)
+  (let ((f* (fdefinition f))
+        (args* (mapcar (lambda (form) (prepare-form form context)) args)))
+    (lambda (env)
+      (apply f* (mapcar (lambda (x) (funcall (the eval-closure x) env)) args*)))))
+
+(declaim (ftype (function (eval-closure list context) eval-closure) prepare-direct-call))
 (defun prepare-direct-call (f args context)
   (let ((args* (mapcar (lambda (form) (prepare-form form context)) args)))
     (lambda (env)
@@ -152,6 +159,7 @@
           (sb-int:parse-lambda-list lambda-list)
        (lambda (env)
          (lambda (&rest args)
+           (declare (dynamic-extent args))
            ;; FIXME: non-simple lambda-lists
            (let ((new-env (make-environment env)))
              (loop for val in args
@@ -463,7 +471,7 @@
                   (t
                    (if (local-function-p context f)
                        (prepare-local-call f args context)
-                       (prepare-direct-call (prepare-function-ref f context) args context))))))))))))
+                       (prepare-global-call f args context))))))))))))
    t))
 
 
