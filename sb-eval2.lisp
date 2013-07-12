@@ -46,9 +46,9 @@
       (setq block-tags (acons block tag block-tags)))
     new-context))
 (defun context-block-tag (context block)
-  (let ((tag (cdr (assoc (the symbol block) (context-block-tags context)))))
-    (assert tag)
-    tag))
+  (let ((parent (context-parent context)))
+    (or (cdr (assoc (the symbol block) (context-block-tags context)))
+        (and parent (context-block-tag parent block)))))
 (defun context-add-go-tags (context new-go-tags catch-tag)
   (let ((new-context (make-context context)))
     (with-slots (go-tags)
@@ -57,7 +57,17 @@
         (setq go-tags (acons new-go-tag catch-tag go-tags))))
     new-context))
 (defun context-find-go-tag (context go-tag)
-  (cdr (assoc (the symbol go-tag) (context-go-tags context))))
+  (let ((parent (context-parent context)))
+    (or (cdr (assoc (the symbol go-tag) (context-go-tags context)))
+        (and parent (context-find-go-tag parent go-tag)))))
+(defun context-find-symbol-macro (context symmac)
+  (let ((parent (context-parent context)))
+    (or (cdr (assoc (the symbol symmac) (context-symbol-macros context)))
+        (and parent (context-find-symbol-macro parent symmac)))))
+(defun context-find-macro (context mac)
+  (let ((parent (context-parent context)))
+    (or (cdr (assoc (the (or symbol list) mac) (context-macros context) :test #'equal))
+        (and parent (context-find-macro parent mac)))))
 (defun context-add-symbol-macros (context bindings)
   (let ((new-context (make-context context)))
     (with-slots (symbol-macros)
@@ -133,6 +143,18 @@
       (lambda (env)
         (declare (ignore env))
         (symbol-value var))))
+
+(declaim (ftype (function ((or symbol list) context) eval-closure) prepare-refunction-))
+(defun prepare-function-ref (function-name context)
+  (if (context-var-lexical-p context `(function ,function-name))
+      (let* ((lexical (context-find-lexical context `(function ,function-name)))
+             (nesting (lexical-nesting lexical))
+             (offset  (lexical-offset lexical)))
+        (lambda (env)
+          (environment-value env nesting offset)))
+      (lambda (env)
+        (declare (ignore env))
+        (fdefinition function-name))))
 
 
 
@@ -216,7 +238,7 @@
      (t
       (etypecase form
         (symbol
-         (let ((macro? (assoc form (context-symbol-macros context))))
+         (let ((macro? (context-find-symbol-macro context form)))
                 (if macro?
                     (funcall (the function (cdr macro?)))
                     (prepare-ref form context))))
@@ -249,9 +271,9 @@
                       (loop for (var valform) on binding-forms by #'cddr
                             collect var
                             collect (context-find-lexical context var)
-                            collect (prepare-form valform context))))               
+                            collect (prepare-form valform context))))
                 (lambda (env)
-                  (loop for (var lexical? val*) on bindings by #'cddr
+                  (loop for (var lexical? val*) on bindings by #'cdddr
                         for value = (funcall (the eval-closure val*) env)
                         for result =
                            (progn
@@ -337,7 +359,7 @@
                                               (cons form (prepare-nil))))
                                         bindings))
                      (n (length bindings*))
-                     (values* (mapcar #'cdr bindings))
+                     (values* (mapcar #'cdr bindings*))
                      (new-context (context-add-lexicals context (mapcar #'first bindings*)))
                      (body* (prepare-progn body new-context)))
                 (lambda (env)
@@ -384,26 +406,35 @@
                     (funcall body* env))))))
            ((multiple-value-setq)
             (destructuring-bind (vars values-form) (rest form)
-              (let ((values-form* (prepare-form values-form context)))
+              (let ((values-form* (prepare-form values-form context))
+                    (lexicals     (mapcar (lambda (v)
+                                            (context-find-lexical context v))
+                                          vars)))
                 (lambda (env)
                   (let* ((values        (multiple-value-list (funcall values-form* env)))
-                         (primary-value (first values))
-                         (env-vars      (environment-variables env)))
-                    (dolist (var vars)
-                      (check-type var symbol)
-                      (setf (cdr (assoc var env-vars)) (pop values)))
+                         (primary-value (first values)))
+                    (loop for lexical? in lexicals
+                          for value in values
+                          for var in vars
+                          do (if lexical?
+                                 (setf (environment-value env
+                                                          (lexical-nesting lexical?)
+                                                          (lexical-offset lexical?))
+                                       value)
+                                 (setf (symbol-value var) value)))
                     primary-value)))))
            ((multiple-value-bind)
             ;; FIXME: SPECIAL declarations!
             (destructuring-bind (vars value-form &body body) (rest form)
               (let* ((value-form* (prepare-form value-form context))
+                     (n           (length (the list vars)))
                      (new-context (context-add-lexicals context vars))
                      (body*       (prepare-progn body new-context)))
                 (lambda (env)
-                  (let* ((new-env (make-environment env))
+                  (let* ((new-env (make-environment env n))
                          (values  (multiple-value-list (funcall value-form* env))))
-                    (dolist (var vars)
-                      (push `(,var . ,(pop values)) (environment-variables new-env)))
+                    (dotimes (i n)
+                      (setf (environment-value new-env 0 i) (pop values)))
                     (funcall body* new-env))))))
            ((progn)
             (prepare-progn (rest form) context))
@@ -497,8 +528,7 @@
             ;; FIXME: Handle SETF expanders?
             (destructuring-bind (f . args) form
               (check-type f (or list symbol))
-              (let ((local-macro? (assoc (the (or list symbol) f)
-                                         (context-macros context)))
+              (let ((local-macro? (context-find-macro context f))
                     (global-macro? (macro-function f)))
                 (cond
                   (local-macro?
