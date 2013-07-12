@@ -28,17 +28,19 @@
   go-tags
   symbol-macros
   macros
-  lexicals)
+  lexicals
+  functions)
 (defun make-null-context ()
   (%make-context :block-tags nil))
 (defun make-context (parent-context)
-  (with-slots (block-tags go-tags symbol-macros macros lexicals)
+  (with-slots (block-tags go-tags symbol-macros macros lexicals functions)
       parent-context
     (%make-context :block-tags block-tags
                    :go-tags go-tags
                    :symbol-macros symbol-macros
                    :macros macros
-                   :lexicals lexicals)))
+                   :lexicals lexicals
+                   :functions functions)))
 (defun context-add-block-tag (context block tag)
   (let ((new-context (make-context context)))
     (with-slots (block-tags)
@@ -91,6 +93,12 @@
     new-context))
 (defun context-add-lexical (context var)
   (context-add-lexicals context (list var)))
+(defun context-add-functions (context fs)
+  (let ((new-context (make-context context)))
+    (with-slots (functions)
+        new-context
+      (setq functions (append fs functions)))
+    new-context))
 
 (deftype eval-closure () `(function (environment) *))
 
@@ -103,24 +111,26 @@
         (declare (ignore env))
         (symbol-value var))))
 
-(declaim (ftype (function ((or symbol list) context) eval-closure) prepare-function-ref))
-(defun prepare-function-ref (f context)
-  (declare (ignore context))
-  (lambda (env)
-    (let ((local-function-record (assoc f (environment-functions env) :test #'equal)))
-      (if local-function-record
-          (cdr local-function-record)
-          (fdefinition f)))))
+(declaim (ftype (function (context (or symbol list)) *) local-function-p))
+(defun local-function-p (context f)
+  (member f (context-functions context)))
 
 (declaim (ftype (function () eval-closure) prepare-nil))
 (defun prepare-nil ()
   (lambda (env) (declare (ignore env))))
 
-(declaim (ftype (function (eval-closure list context) eval-closure) prepare-function-call))
-(defun prepare-function-call (f args context)
+(declaim (ftype (function ((or symbol list) list context) eval-closure) prepare-local-call))
+(defun prepare-local-call (f args context)
   (let ((args* (mapcar (lambda (form) (prepare-form form context)) args)))
     (lambda (env)
-      (apply (funcall f env)
+      (apply (the function (cdr (assoc f (environment-functions env) :test #'equal)))
+             (mapcar (lambda (x) (funcall (the eval-closure x) env)) args*)))))
+
+(declaim (ftype (function (eval-closure list context) eval-closure) prepare-global-call))
+(defun prepare-direct-call (f args context)
+  (let ((args* (mapcar (lambda (form) (prepare-form form context)) args)))
+    (lambda (env)
+      (apply (the (or symbol function) (funcall (the eval-closure f) env))
              (mapcar (lambda (x) (funcall (the eval-closure x) env)) args*)))))
 
 (declaim (ftype (function (list context) eval-closure) prepare-progn))
@@ -237,13 +247,14 @@
                   (prepare-nil))))
            ((flet)
             (destructuring-bind (bindings &rest body) (rest form)
-              (let ((body* (prepare-progn body context))
-                    (bindings* (mapcar (lambda (form)
-                                         (if (listp form)
-                                             (cons (first form)
-                                                   (prepare-lambda (rest form) context))
-                                             (cons form (prepare-nil))))
-                                       bindings)))
+              (let* ((bindings* (mapcar (lambda (form)
+                                          (if (listp form)
+                                              (cons (first form)
+                                                    (prepare-lambda (rest form) context))
+                                              (cons form (prepare-nil))))
+                                        bindings))
+                     (new-context (context-add-functions context (mapcar #'first bindings*)))
+                     (body* (prepare-progn body new-context)))
                 (lambda (env)
                   (let ((new-env (make-environment env)))
                     (loop for (var . val) in bindings*
@@ -252,13 +263,14 @@
                     (funcall body* new-env))))))
            ((labels)
             (destructuring-bind (bindings &rest body) (rest form)
-              (let ((body* (prepare-progn body context))
-                    (bindings* (mapcar (lambda (form)
-                                         (if (listp form)
-                                             (cons (first form)
-                                                   (prepare-lambda (rest form) context))
-                                             (cons form (prepare-nil))))
-                                       bindings)))
+              (let* ((new-context (context-add-functions context (mapcar #'first bindings)))
+                     (bindings* (mapcar (lambda (form)
+                                          (if (listp form)
+                                              (cons (first form)
+                                                    (prepare-lambda (rest form) new-context))
+                                              (cons form (prepare-nil))))
+                                        bindings))
+                     (body* (prepare-progn body new-context)))
                 (lambda (env)
                   (let ((new-env (make-environment env)))
                     (loop for (var . val) in bindings*
@@ -447,9 +459,11 @@
                         (listp (first f))
                         (eq 'lambda (first (first f))))
                    (let ((lambda-fn (prepare-lambda (rest (first f)) context)))
-                     (prepare-function-call lambda-fn args context)))
+                     (prepare-direct-call lambda-fn args context)))
                   (t
-                   (prepare-function-call (prepare-function-ref f context) args context)))))))))))
+                   (if (local-function-p context f)
+                       (prepare-local-call f args context)
+                       (prepare-direct-call (prepare-function-ref f context) args context))))))))))))
    t))
 
 
