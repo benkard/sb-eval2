@@ -10,9 +10,10 @@
 
 (defvar *stack*)
 (defvar *fp*)
+(defvar *sp*)
 
 (deftype stack ()
-  `(array t (*)))
+  'simple-vector)
 
 (defstruct (environment (:constructor make-environment (parent
                                                         &optional (size 0)
@@ -219,7 +220,7 @@
          (inline call-with-stack-frame))
 (defun call-with-stack-frame (nvars thunk)
   (let* ((stack *stack*)
-         (sp (fill-pointer stack))
+         (sp *sp*)
          (new-size (+ sp nvars 1)))
     (declare (type stack stack)
              (type fixnum sp new-size))
@@ -227,16 +228,16 @@
           while (< size new-size)
           do (format t "~&Resizing stack (new size: ~D)."
                      (+ new-size (the fixnum (round (* size 1.5)))))
-             (adjust-array stack
-                           (list (the fixnum
-                                      (+ new-size (the fixnum
-                                                       (round (* size 1.5))))))))
-    (setf (fill-pointer stack) new-size)
+             (setq stack
+                   (adjust-array stack
+                                 (list (the fixnum
+                                            (+ new-size (the fixnum
+                                                             (round (* size 1.5))))))))
+             (setq *stack* stack))
     (setf (aref stack sp) (the fixnum *fp*))
-    (unwind-protect
-         (let ((*fp* sp))
-           (funcall thunk))
-      (setf (fill-pointer stack) sp))))
+    (let ((*fp* sp)
+          (*sp* new-size))
+      (funcall thunk))))
 
 (declaim (ftype (function (fixnum) *) deref-stack)
          (inline deref-stack))
@@ -796,8 +797,9 @@
   `(call-with-stack (lambda () ,@body)))
 
 (defun call-with-stack (thunk)
-  (let ((*stack* (make-array '(2000) :fill-pointer t :adjustable t))
-        (*fp* 0))
+  (let ((*stack* (make-array '(10000)))
+        (*fp* 0)
+        (*sp* 0))
     (funcall thunk)))
 
 (defun eval (form)
