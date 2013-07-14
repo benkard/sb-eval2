@@ -170,27 +170,63 @@
 (defun prepare-nil ()
   (lambda (env) (declare (ignore env))))
 
+(defmacro specialize (&environment env var value possible-values &body body)
+  `(ecase ,value
+     ,@(loop for x in (sb-int:eval-in-lexenv possible-values env)
+             collect
+                `((,x) ,(sb-int:eval-in-lexenv `(let ((,var ,x)) ,@body) env)))))
+
 (declaim (ftype (function ((or symbol list) list context) eval-closure) prepare-local-call))
 (defun prepare-local-call (f args context)
   (let* ((args* (mapcar (lambda (form) (prepare-form form context)) args))
          (flex (context-find-function context f))
          (offset (lexical-offset flex))
          (nesting (lexical-nesting flex)))
-    (lambda (env)
-      (apply (the function (environment-value env nesting offset))
-             (mapcar (lambda (x) (funcall (the eval-closure x) env)) args*)))))
+    (if (< (length args) 20)
+        (specialize m% (length args) (loop for i from 0 below 20 collect i)
+          (let ((argvars (loop for i from 0 below m%
+                               collect (gensym (format nil "ARG~D-" i)))))
+            `(let ,(loop for var in argvars
+                         for i from 0 below m%
+                         collect `(,var (nth ,i args*)))
+               (lambda (env)
+                 (funcall (the function (environment-value env nesting offset))
+                          ,@(loop for var in argvars
+                                  collect `(funcall (the eval-closure ,var) env)))))))
+        (lambda (env)
+          (apply (the function (environment-value env nesting offset))
+                 (mapcar (lambda (x) (funcall (the eval-closure x) env)) args*))))))
 
 (declaim (ftype (function ((or symbol list) list context) eval-closure) prepare-global-call))
 (defun prepare-global-call (f args context)
   (let ((args* (mapcar (lambda (form) (prepare-form form context)) args)))
-    (if (fboundp f)
-        (let ((f* (fdefinition f)))
-          (lambda (env)
-            (apply f*
-                   (mapcar (lambda (x) (funcall (the eval-closure x) env)) args*))))
-        (lambda (env)
-          (apply (fdefinition f)
-                 (mapcar (lambda (x) (funcall (the eval-closure x) env)) args*))))))
+    (if (< (length args) 20)
+        (specialize m% (length args) (loop for i from 0 below 20 collect i)
+          (let ((argvars (loop for i from 0 below m%
+                               collect (gensym (format nil "ARG~D-" i)))))
+            `(let ,(loop for var in argvars
+                         for i from 0 below m%
+                         collect `(,var (nth ,i args*)))
+               (if (fboundp f)
+                   (let ((f* (fdefinition f)))
+                     (lambda (env)
+                       (declare (ignorable env))
+                       (funcall f*
+                                ,@(loop for var in argvars
+                                        collect `(funcall (the eval-closure ,var) env)))))
+                   (lambda (env)
+                     (declare (ignorable env))
+                     (funcall (fdefinition f)
+                              ,@(loop for var in argvars
+                                      collect `(funcall (the eval-closure ,var) env))))))))
+        (if (fboundp f)
+            (let ((f* (fdefinition f)))
+              (lambda (env)
+                (apply f*
+                       (mapcar (lambda (x) (funcall (the eval-closure x) env)) args*))))
+            (lambda (env)
+              (apply (fdefinition f)
+                     (mapcar (lambda (x) (funcall (the eval-closure x) env)) args*)))))))
 
 (declaim (ftype (function (eval-closure list context) eval-closure) prepare-direct-call))
 (defun prepare-direct-call (f args context)
