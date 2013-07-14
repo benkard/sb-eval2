@@ -213,12 +213,22 @@
     (setq env (environment-parent env)))
   (setf (svref (environment-data env) offset) val))
 
+(defmacro with-stack (() &body body)
+  `(call-with-stack (lambda () ,@body)))
+
+(declaim (inline call-with-stack))
+(defun call-with-stack (thunk)
+  (let ((*stack* (make-array '(10000)))
+        (*fp* 0)
+        (*sp* 0))
+    (funcall thunk)))
+
 (defmacro with-stack-frame (nvars &body body)
   `(call-with-stack-frame ,nvars (lambda () ,@body)))
 
-(declaim (ftype (function (fixnum function) *) call-with-stack-frame)
-         (inline call-with-stack-frame))
-(defun call-with-stack-frame (nvars thunk)
+(declaim (ftype (function (fixnum function) *) really-call-with-stack-frame)
+         (inline really-call-with-stack-frame))
+(defun really-call-with-stack-frame (nvars thunk)
   (let* ((stack *stack*)
          (sp *sp*)
          (new-size (+ sp nvars 1)))
@@ -236,6 +246,13 @@
     (let ((*fp* sp)
           (*sp* new-size))
       (funcall thunk))))
+
+(declaim (ftype (function (fixnum function) *) call-with-stack-frame)
+         (inline call-with-stack-frame))
+(defun call-with-stack-frame (nvars thunk)
+  (if (boundp '*stack*)
+      (really-call-with-stack-frame nvars thunk)
+      (with-stack () (really-call-with-stack-frame nvars thunk))))
 
 (declaim (ftype (function (fixnum) *) deref-stack)
          (inline deref-stack))
@@ -790,19 +807,8 @@
                        (prepare-global-call f args context))))))))))))
    t))
 
-
-(defmacro with-stack (() &body body)
-  `(call-with-stack (lambda () ,@body)))
-
-(defun call-with-stack (thunk)
-  (let ((*stack* (make-array '(10000)))
-        (*fp* 0)
-        (*sp* 0))
-    (funcall thunk)))
-
 (defun eval (form)
-  (with-stack ()
-    (funcall (prepare-form form) (make-null-environment))))
+  (funcall (prepare-form form) (make-null-environment)))
 
 
 (defun load (filename)
