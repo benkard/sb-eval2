@@ -226,9 +226,7 @@
              (type fixnum sp new-size))
     (loop for size fixnum = (array-dimension stack 0)
           while (< size new-size)
-          do (format t "~&Resizing stack (new size: ~D)."
-                     (+ new-size (the fixnum (round (* size 1.5)))))
-             (setq stack
+          do (setq stack
                    (adjust-array stack
                                  (list (the fixnum
                                             (+ new-size (the fixnum
