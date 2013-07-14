@@ -166,6 +166,12 @@
                            for v in vars
                            collect (make-env-lexical v i))))
     new-context))
+(defun context-bump-stack (context)
+  (let ((new-context (make-context context)))
+    (with-slots (stack-hop)
+        new-context
+      (setq stack-hop t))
+    new-context))
 (defun context-add-stack-lexicals (context vars)
   ;; open a new variable context
     (let ((new-context (make-context context)))
@@ -565,16 +571,24 @@
            ((let)
             ;; FIXME: SPECIAL declarations!
             (destructuring-bind (bindings &rest body) (rest form)
-              (let* ((bindings* (mapcar (lambda (form)
-                                          (if (listp form)
-                                              (cons (first form)
-                                                    (prepare-form (second form) context))
-                                              (cons form (prepare-nil))))
-                                        bindings))
-                     (n (length bindings*))
-                     (values* (mapcar #'cdr bindings*))
-                     (vars (mapcar #'car bindings*)))
-                (if (maybe-closes-over-p `(progn ,@body) vars)
+              (let* ((real-bindings (mapcar (lambda (form)
+                                              (if (listp form)
+                                                  (cons (first form) (second form))
+                                                  (cons form nil)))
+                                            bindings))
+                     (vars (mapcar #'car real-bindings))
+                     (envp (maybe-closes-over-p `(progn ,@body) vars))
+                     (binding-context (if envp
+                                          context
+                                          (context-bump-stack context)))
+                     (bindings* (mapcar (lambda (form)
+                                          (cons (car form)
+                                                (prepare-form (cdr form)
+                                                              binding-context)))
+                                        real-bindings))
+                     (n (length (the list bindings)))
+                     (values* (mapcar #'cdr bindings*)))
+                (if envp
                     (let* ((new-context
                              (context-add-env-lexicals context
                                                        (mapcar #'first bindings*)))
