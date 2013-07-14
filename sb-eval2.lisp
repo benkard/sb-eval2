@@ -8,6 +8,12 @@
 #+(or)
 (setq SB-EXT:*EVALUATOR-MODE* :interpret)
 
+(defvar *stack*)
+(defvar *fp*)
+
+(deftype stack ()
+  `(array t (*)))
+
 (defstruct (environment (:constructor make-environment (parent
                                                         &optional (size 0)
                                                         &aux (data
@@ -17,13 +23,68 @@
   (data nil :type simple-vector))
 (defun make-null-environment () (make-environment nil 0))
 
-(defstruct (lexical (:constructor make-lexical (name offset &optional (nesting nil))))
-  (name nil :type (or symbol list))
-  nesting
-  offset)
+(defclass lexical ()
+  ((name    :accessor lexical-name    :initarg :name    :type (or symbol list))))
 
-(defun lexical-with-nesting (lexical nesting)
-  (make-lexical (lexical-name lexical) (lexical-offset lexical) nesting))
+(defclass env-lexical (lexical)
+  ((offset  :accessor lexical-offset  :initarg :offset  :type fixnum)
+   (nesting :accessor lexical-nesting :initarg :nesting :type fixnum)))
+
+(defclass stack-lexical (lexical)
+  ((offset  :accessor lexical-offset  :initarg :offset  :type fixnum)
+   (nesting :accessor lexical-nesting :initarg :nesting :type fixnum)))
+
+(defun make-stack-lexical (name offset &optional (nesting -1))
+  (make-instance 'stack-lexical :name name :offset offset :nesting nesting))
+(defun make-env-lexical (name offset &optional (nesting -1))
+  (make-instance 'env-lexical :name name :offset offset :nesting nesting))
+
+(defmethod lexical-with-nesting ((lexical stack-lexical) nesting)
+  (make-stack-lexical (lexical-name lexical) (lexical-offset lexical) nesting))
+(defmethod lexical-with-nesting ((lexical env-lexical) nesting)
+  (make-env-lexical (lexical-name lexical) (lexical-offset lexical) nesting))
+
+(defun maybe-references-p (form vars)
+  ;; Use `(function ,name) for local functions.
+  ;;
+  ;; FIXME: This doesn't do macro expansion, so it's probably
+  ;; incorrect.
+  (typecase form
+    (symbol
+     (member form vars :test #'equal))
+    (cons
+     (destructuring-bind (a . b) form
+       (or (maybe-references-p a vars)
+           (maybe-references-p b vars))))
+    (t
+     nil)))
+
+(defun maybe-closes-over-p (form vars)
+  ;; Use `(function ,name) for local functions.
+  ;;
+  ;; NOTE: This is a *very* simplistic algorithm with a *lot* of false
+  ;; positives.
+  ;;
+  ;; FIXME: This doesn't do macro expansion, so it's probably
+  ;; incorrect.
+  (typecase form
+    (symbol
+     nil)
+    (cons
+     (destructuring-bind (a . b) form
+       (case a
+         ((lambda)
+          (maybe-references-p form vars))
+         ((flet labels)
+          (typecase b
+            (cons
+             (destructuring-bind (bindings . rest) form
+               (or (maybe-references-p bindings vars)
+                   (maybe-closes-over-p rest vars))))
+            (t
+             (maybe-closes-over-p b vars)))))))
+    (t
+     nil)))
 
 (defstruct (box (:constructor make-box (value)))
   value)
@@ -31,7 +92,8 @@
 
 (defstruct (context (:constructor make-context (&optional parent)))
   parent
-  (levelp nil :type boolean)
+  (env-hop nil :type boolean)
+  (stack-hop nil :type boolean)
   (block-tags nil :type list)
   (go-tags nil :type list)
   (symbol-macros nil :type list)
@@ -93,44 +155,110 @@
                (cons tag forms)))))
 (defun context-var-lexical-p (context var)
   (context-find-lexical context var))
-(defun context-add-lexicals (context vars)
+(defun context-add-env-lexicals (context vars)
   ;; open a new variable context
     (let ((new-context (make-context context)))
-    (with-slots (lexicals levelp)
+    (with-slots (lexicals env-hop)
         new-context
-      (setq levelp t)
-      (setq lexicals (loop for i from 0
+      (setq env-hop t)
+      (setq lexicals (loop for i fixnum from 0
                            for v in vars
-                           collect (make-lexical v i))))
+                           collect (make-env-lexical v i))))
     new-context))
-(defun context-add-functions (context fs)
-  (context-add-lexicals context (mapcar (lambda (x) `(function ,x)) fs)))
-(defun context-add-lexical (context var)
-  (context-add-lexicals context (list var)))
+(defun context-add-stack-lexicals (context vars)
+  ;; open a new variable context
+    (let ((new-context (make-context context)))
+    (with-slots (lexicals stack-hop)
+        new-context
+      (setq stack-hop t)
+      (setq lexicals (loop for i fixnum from 0
+                           for v in vars
+                           collect (make-stack-lexical v i))))
+    new-context))
+(defun context-add-env-functions (context fs)
+  (context-add-env-lexicals context (mapcar (lambda (x) `(function ,x)) fs)))
+(defun context-add-stack-functions (context fs)
+  (context-add-stack-lexicals context (mapcar (lambda (x) `(function ,x)) fs)))
 (defun context-find-lexical (context var)
-  (loop with level = 0
+  (loop with env-level = 0
+        with stack-level = 0
         until (null context)
         for record = (find var
                            (context-lexicals context)
                            :key #'lexical-name
                            :test #'equal)
         when record
-          do (return (lexical-with-nesting record level))
-        when (context-levelp context)
-          do (incf level)
+          do (return
+               (etypecase record
+                 (env-lexical   (lexical-with-nesting record env-level))
+                 (stack-lexical (lexical-with-nesting record stack-level))))
+        when (context-env-hop context)
+          do (incf env-level)
+        when (context-stack-hop context)
+          do (incf stack-level)
         do (setq context (context-parent context))))
 
 (deftype eval-closure () `(function (environment) *))
 
+(declaim (inline environment-value))
 (defun environment-value (env nesting offset)
   (dotimes (i (the fixnum nesting))
     (setq env (environment-parent env)))
   (svref (environment-data env) offset))
 
+(declaim (inline (setf environment-value)))
 (defun (setf environment-value) (val env nesting offset)
   (dotimes (i (the fixnum nesting))
     (setq env (environment-parent env)))
   (setf (svref (environment-data env) offset) val))
+
+(defmacro with-stack-frame (nvars &body body)
+  `(call-with-stack-frame ,nvars (lambda () ,@body)))
+
+(declaim (ftype (function (fixnum function) *) call-with-stack-frame)
+         (inline call-with-stack-frame))
+(defun call-with-stack-frame (nvars thunk)
+  (let* ((stack *stack*)
+         (sp (fill-pointer stack))
+         (new-size (+ sp nvars 1)))
+    (declare (type stack stack)
+             (type fixnum sp new-size))
+    (loop for size fixnum = (array-dimension stack 0)
+          while (< size new-size)
+          do (format t "~&Resizing stack (new size: ~D)."
+                     (+ new-size (the fixnum (round (* size 1.5)))))
+             (adjust-array stack
+                           (list (the fixnum
+                                      (+ new-size (the fixnum
+                                                       (round (* size 1.5))))))))
+    (setf (fill-pointer stack) new-size)
+    (setf (aref stack sp) (the fixnum *fp*))
+    (unwind-protect
+         (let ((*fp* sp))
+           (funcall thunk))
+      (setf (fill-pointer stack) sp))))
+
+(declaim (ftype (function (fixnum) *) deref-stack)
+         (inline deref-stack))
+(defun deref-stack (pos)
+  (aref (the stack *stack*) pos))
+
+(declaim (ftype (function (fixnum fixnum) *) stack-ref)
+         (inline stack-ref))
+(defun stack-ref (nesting offset)
+  (let ((pos (the fixnum *fp*)))
+    (dotimes (i nesting)
+      (setq pos (the fixnum (deref-stack pos))))
+    (aref (the stack *stack*) (the fixnum (+ 1 offset pos)))))
+
+(declaim (ftype (function (* fixnum fixnum) *) (setf stack-ref))
+         (inline (setf stack-ref)))
+(defun (setf stack-ref) (val nesting offset)
+  (let ((pos *fp*))
+    (declare (type fixnum pos))
+    (dotimes (i nesting)
+      (setq pos (deref-stack pos)))
+    (setf (aref (the stack *stack*) (the fixnum (+ 1 offset pos))) val)))
 
 (declaim (ftype (function (symbol context) eval-closure) prepare-ref))
 (defun prepare-ref (var context)
@@ -138,13 +266,19 @@
       (let* ((lexical (context-find-lexical context var))
              (nesting (lexical-nesting lexical))
              (offset (lexical-offset lexical)))
-        (lambda (env)
-          (environment-value env nesting offset)))
+        (etypecase lexical
+          (env-lexical
+           (lambda (env)
+             (environment-value env nesting offset)))
+          (stack-lexical
+           (lambda (env)
+             (declare (ignore env))
+             (stack-ref nesting offset)))))
       (lambda (env)
         (declare (ignore env))
         (symbol-value var))))
 
-(declaim (ftype (function ((or symbol list) context) eval-closure) prepare-refunction-))
+(declaim (ftype (function ((or symbol list) context) eval-closure) prepare-function-ref))
 (defun prepare-function-ref (function-name context)
   (if (context-var-lexical-p context `(function ,function-name))
       (let* ((lexical (context-find-lexical context `(function ,function-name)))
@@ -243,25 +377,67 @@
         (dolist (form* body* result)
           (setq result (funcall (the eval-closure form*) env)))))))
 
+#+ (or)
+                (if (maybe-closes-over-p `(progn ,@body) vars)
+                    (let* ((new-context
+                             (context-add-env-lexicals context
+                                                       (mapcar #'first bindings*)))
+                           (body*
+                             (prepare-progn body new-context)))
+                      (lambda (env)
+                        (let ((new-env (make-environment env n)))
+                          (loop for i from 0 below n
+                                for val* in values*
+                                do (setf (environment-value new-env 0 i)
+                                         (funcall (the eval-closure val*) env)))
+                          (funcall body* new-env))))
+                    (let* ((new-context
+                             (context-add-stack-lexicals context
+                                                         (mapcar #'first bindings*)))
+                           (body*
+                             (prepare-progn body new-context)))
+                      (lambda (env)
+                        (with-stack-frame n
+                          (loop for i from 0 below n
+                                for val* in values*
+                                do (setf (stack-ref i)
+                                         (funcall (the eval-closure val*) env)))
+                          (funcall body* env)))))
+
 (declaim (ftype (function (list context) eval-closure) prepare-lambda))
 (defun prepare-lambda (lambda-form context)
   (destructuring-bind (lambda-list &rest body) lambda-form
     ;; FIXME: SPECIAL declarations!
-    (let* ((n (length (the list lambda-list)))
-           (new-context (context-add-lexicals context lambda-list))
-           (body* (prepare-progn body new-context)))
-      (multiple-value-bind (required optional restp rest keyp keys allowp auxp aux
-                            morep more-context more-count)
-          (sb-int:parse-lambda-list lambda-list)
-       (lambda (env)
-         (lambda (&rest args)
-           (declare (dynamic-extent args))
-           ;; FIXME: non-simple lambda-lists
-           (let ((new-env (make-environment env n)))
-             (loop for i from 0 to n
-                   for val in args
-                   do (setf (environment-value new-env 0 i) val))
-             (funcall body* new-env))))))))
+    (multiple-value-bind (required optional restp rest keyp keys allowp auxp aux
+                          morep more-context more-count)
+        (sb-int:parse-lambda-list lambda-list)
+      (declare (ignorable required optional restp rest keyp keys allowp auxp aux
+                          morep more-context more-count))
+      (let* ((argvars lambda-list)    ;fixme
+             (n (length (the list lambda-list))))
+        (if (maybe-closes-over-p `(progn ,@body) argvars)
+            (let* ((new-context (context-add-env-lexicals context argvars))
+                   (body* (prepare-progn body new-context)))
+              (lambda (env)
+                (lambda (&rest args)
+                  (declare (dynamic-extent args))
+                  ;; FIXME: non-simple lambda-lists
+                  (let ((new-env (make-environment env n)))
+                    (loop for i from 0 to n
+                          for val in args
+                          do (setf (environment-value new-env 0 i) val))
+                    (funcall body* new-env)))))
+            (let* ((new-context (context-add-stack-lexicals context argvars))
+                   (body* (prepare-progn body new-context)))
+              (lambda (env)
+                (lambda (&rest args)
+                  (declare (dynamic-extent args))
+                  ;; FIXME: non-simple lambda-lists
+                  (with-stack-frame n
+                    (loop for i from 0 below n
+                          for val in args
+                          do (setf (stack-ref 0 i) val))
+                    (funcall body* env))))))))))
 
 (defun context->native-environment (context)
   ;;FIXME
@@ -319,13 +495,20 @@
                         for result =
                            (progn
                              (check-type var symbol)
-                             (if ;XXX could lift the conditional out of the lambda
-                              lexical?
-                              (setf (environment-value env
-                                                       (lexical-nesting lexical?)
-                                                       (lexical-offset lexical?))
-                                    value)
-                              (setf (symbol-value var) value)))
+                             (etypecase lexical?  ; XXX could lift the
+                                                  ; case distinction
+                                                  ; out of the lambda
+                               (env-lexical
+                                (setf (environment-value env
+                                                         (lexical-nesting lexical?)
+                                                         (lexical-offset lexical?))
+                                      value))
+                               (stack-lexical
+                                (setf (stack-ref (lexical-nesting lexical?)
+                                                 (lexical-offset lexical?))
+                                      value))
+                               (null
+                                (setf (symbol-value var) value))))
                         finally (return result))))))
            ((catch)
             (destructuring-bind (tag &body body) (rest form)
@@ -360,7 +543,7 @@
                                                     (prepare-lambda (rest form) context))
                                               (cons form (prepare-nil))))
                                         bindings))
-                     (new-context (context-add-functions context (mapcar #'first bindings*)))
+                     (new-context (context-add-env-functions context (mapcar #'first bindings*)))
                      (functions (mapcar #'cdr bindings*))
                      (n (length functions))
                      (body* (prepare-progn body new-context)))
@@ -373,7 +556,7 @@
                     (funcall body* new-env))))))
            ((labels)
             (destructuring-bind (bindings &rest body) (rest form)
-              (let* ((new-context (context-add-functions context (mapcar #'first bindings)))
+              (let* ((new-context (context-add-env-functions context (mapcar #'first bindings)))
                      (bindings* (mapcar (lambda (form)
                                           (if (listp form)
                                               (cons (first form)
@@ -401,15 +584,32 @@
                                         bindings))
                      (n (length bindings*))
                      (values* (mapcar #'cdr bindings*))
-                     (new-context (context-add-lexicals context (mapcar #'first bindings*)))
-                     (body* (prepare-progn body new-context)))
-                (lambda (env)
-                  (let ((new-env (make-environment env n)))
-                    (loop for i from 0 to n
-                          for val* in values*
-                          do (setf (environment-value new-env 0 i)
-                                   (funcall (the eval-closure val*) env)))
-                    (funcall body* new-env))))))
+                     (vars (mapcar #'car bindings*)))
+                (if (maybe-closes-over-p `(progn ,@body) vars)
+                    (let* ((new-context
+                             (context-add-env-lexicals context
+                                                       (mapcar #'first bindings*)))
+                           (body*
+                             (prepare-progn body new-context)))
+                      (lambda (env)
+                        (let ((new-env (make-environment env n)))
+                          (loop for i from 0 below n
+                                for val* in values*
+                                do (setf (environment-value new-env 0 i)
+                                         (funcall (the eval-closure val*) env)))
+                          (funcall body* new-env))))
+                    (let* ((new-context
+                             (context-add-stack-lexicals context
+                                                         (mapcar #'first bindings*)))
+                           (body*
+                             (prepare-progn body new-context)))
+                      (lambda (env)
+                        (with-stack-frame n
+                          (loop for i from 0 below n
+                                for val* in values*
+                                do (setf (stack-ref 0 i)
+                                         (funcall (the eval-closure val*) env)))
+                          (funcall body* env))))))))
            ((let*)
             ;; FIXME: SPECIAL declarations!
             (destructuring-bind (bindings &rest body) (rest form)
@@ -421,7 +621,7 @@
                                  (let* ((var  (if (listp binding) (first binding) binding))
                                         (val  (if (listp binding) (prepare-form (second binding) context) (prepare-nil)))
                                       
-                                        (new-context (context-add-lexical context var))
+                                        (new-context (context-add-env-lexicals context (list var)))
                                         (more (prepare-let* rest-bindings new-context)))
                                    (lambda (env)
                                      (let ((new-env (make-environment env 1)))
@@ -469,7 +669,7 @@
             (destructuring-bind (vars value-form &body body) (rest form)
               (let* ((value-form* (prepare-form value-form context))
                      (n           (length (the list vars)))
-                     (new-context (context-add-lexicals context vars))
+                     (new-context (context-add-env-lexicals context vars))
                      (body*       (prepare-progn body new-context)))
                 (lambda (env)
                   (let* ((new-env (make-environment env n))
@@ -592,8 +792,17 @@
    t))
 
 
+(defmacro with-stack (() &body body)
+  `(call-with-stack (lambda () ,@body)))
+
+(defun call-with-stack (thunk)
+  (let ((*stack* (make-array '(2000) :fill-pointer t :adjustable t))
+        (*fp* 0))
+    (funcall thunk)))
+
 (defun eval (form)
-  (funcall (prepare-form form) (make-null-environment)))
+  (with-stack ()
+    (funcall (prepare-form form) (make-null-environment))))
 
 
 (defun load (filename)
