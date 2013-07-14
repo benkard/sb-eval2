@@ -393,33 +393,6 @@
         (dolist (form* body* result)
           (setq result (funcall (the eval-closure form*) env)))))))
 
-#+ (or)
-                (if (maybe-closes-over-p `(progn ,@body) vars)
-                    (let* ((new-context
-                             (context-add-env-lexicals context
-                                                       (mapcar #'first bindings*)))
-                           (body*
-                             (prepare-progn body new-context)))
-                      (lambda (env)
-                        (let ((new-env (make-environment env n)))
-                          (loop for i from 0 below n
-                                for val* in values*
-                                do (setf (environment-value new-env 0 i)
-                                         (funcall (the eval-closure val*) env)))
-                          (funcall body* new-env))))
-                    (let* ((new-context
-                             (context-add-stack-lexicals context
-                                                         (mapcar #'first bindings*)))
-                           (body*
-                             (prepare-progn body new-context)))
-                      (lambda (env)
-                        (with-stack-frame n
-                          (loop for i from 0 below n
-                                for val* in values*
-                                do (setf (stack-ref i)
-                                         (funcall (the eval-closure val*) env)))
-                          (funcall body* env)))))
-
 (declaim (ftype (function (list context) eval-closure) prepare-lambda))
 (defun prepare-lambda (lambda-form context)
   (destructuring-bind (lambda-list &rest body) lambda-form
