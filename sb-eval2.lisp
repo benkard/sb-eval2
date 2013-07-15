@@ -249,6 +249,8 @@
       (multiple-value-bind (required optional restp rest keyp keys allowp auxp aux
                             morep more-context more-count)
           (sb-int:parse-lambda-list lambda-list)
+        (when (or optional restp keyp allowp auxp morep)
+          (return-from prepare-lambda (lambda (env) (lambda (&rest args) (error "NYI")))))
        (if (< n 20)
            (specialize m% n (loop for i from 0 below 20 collect i)
              (let ((args (loop for i from 0 below m%
