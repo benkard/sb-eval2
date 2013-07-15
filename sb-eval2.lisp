@@ -239,7 +239,7 @@
 
 (declaim (inline call-with-stack))
 (defun call-with-stack (thunk)
-  (let ((*stack* (make-array '(10000)))
+  (let ((*stack* (make-array '(10000) :initial-element '-))
         (*fp* 0)
         (*sp* 0))
     (funcall thunk)))
@@ -250,6 +250,7 @@
 (declaim (ftype (function (fixnum function) *) really-call-with-stack-frame)
          (inline really-call-with-stack-frame))
 (defun really-call-with-stack-frame (nvars thunk)
+  ;;(format t "~&; New frame (size ~d)" nvars)
   (let* ((stack *stack*)
          (sp *sp*)
          (new-size (+ sp nvars 1)))
