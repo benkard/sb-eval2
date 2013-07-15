@@ -5,8 +5,8 @@
 
 (in-package "SB-EVAL2")
 
-#+(or)
-(setq SB-EXT:*EVALUATOR-MODE* :interpret)
+;;(declaim (optimize (debug 3) (space 0) (speed 0) (safety 3) (compilation-speed 0)))
+(declaim (optimize (debug 0) (space 0) (speed 3) (safety 0) (compilation-speed 0)))
 
 (defvar *stack*)
 (defvar *fp*)
@@ -93,10 +93,6 @@
              (maybe-closes-over-p b vars)))))))
     (t
      nil)))
-
-(defstruct (box (:constructor make-box (value)))
-  value)
-(defun unbox (box) (box-value box))
 
 (defstruct (context (:constructor make-context (&optional parent)))
   parent
@@ -460,30 +456,53 @@
       (declare (ignorable required optional restp rest keyp keys allowp auxp aux
                           morep more-context more-count))
       (let* ((argvars lambda-list)    ;fixme
-             (n (length (the list lambda-list))))
-        (if (maybe-closes-over-p `(progn ,@body) argvars)
-            (let* ((new-context (context-add-env-lexicals context argvars))
-                   (body* (prepare-progn body new-context)))
-              (lambda (env)
-                (lambda (&rest args)
-                  (declare (dynamic-extent args))
-                  ;; FIXME: non-simple lambda-lists
-                  (let ((new-env (make-environment env n)))
-                    (loop for i from 0 to n
-                          for val in args
-                          do (setf (environment-value new-env 0 i) val))
-                    (funcall body* new-env)))))
-            (let* ((new-context (context-add-stack-lexicals context argvars))
-                   (body* (prepare-progn body new-context)))
-              (lambda (env)
-                (lambda (&rest args)
-                  (declare (dynamic-extent args))
-                  ;; FIXME: non-simple lambda-lists
-                  (with-stack-frame n
-                    (loop for i from 0 below n
-                          for val in args
-                          do (setf (stack-ref 0 i) val))
-                    (funcall body* env))))))))))
+             (n (length (the list lambda-list)))
+             (envp (maybe-closes-over-p `(progn ,@body) argvars))
+             (new-context (if envp
+                              (context-add-env-lexicals context argvars)
+                              (context-add-stack-lexicals context argvars)))
+             (body* (prepare-progn body new-context)))
+        (if (< n 20)
+            (specialize m% n (loop for i from 0 below 20 collect i)
+              (let ((args (loop for i from 0 below m%
+                                collect (gensym (format nil "ARG~D-" i)))))
+                `(if envp
+                     (lambda (env)
+                       (lambda ,args
+                         ;; FIXME: non-simple lambda-lists
+                         (let ((new-env (make-environment env ,m%)))
+                           ,@(loop for i from 0
+                                   for val in args
+                                   collect `(setf (environment-value new-env 0 ,i) ,val))
+                           (funcall body* new-env))))
+                     (lambda (env)
+                       (lambda ,args
+                         ;; FIXME: non-simple lambda-lists
+                         (with-stack-frame ,m%
+                           ,@(loop for i from 0
+                                   for val in args
+                                   collect `(setf (stack-ref 0 ,i) ,val))
+                           (funcall body* env)))))))
+            (if envp
+                (lambda (env)
+                  (lambda (&rest args)
+                    (declare (dynamic-extent args))
+                    ;; FIXME: non-simple lambda-lists
+                    (let ((new-env (make-environment env n)))
+                      (loop for i from 0 to n
+                            for val in args
+                            do (setf (environment-value new-env 0 i) val))
+                      (funcall body* new-env))))
+                (lambda (env)
+                  (lambda (&rest args)
+                    (declare (dynamic-extent args))
+                    ;; FIXME: non-simple lambda-lists
+                    (with-stack-frame n
+                      (loop for i from 0 below n
+                            for val in args
+                            do (setf (stack-ref 0 i) val))
+                      (funcall body* env))))))))))
+
 
 (defun context->native-environment (context)
   ;;FIXME
