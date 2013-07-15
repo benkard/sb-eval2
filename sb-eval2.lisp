@@ -5,6 +5,8 @@
 
 (in-package "SB-EVAL2")
 
+;;(declaim (optimize (debug 3) (space 0) (speed 0) (safety 3) (compilation-speed 0)))
+(declaim (optimize (debug 0) (space 0) (speed 3) (safety 0) (compilation-speed 0)))
 
 (defstruct (environment (:constructor make-environment (parent
                                                         &optional (size 0)
