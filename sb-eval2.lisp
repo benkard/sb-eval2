@@ -12,13 +12,7 @@
 (defvar *fp*)
 (defvar *sp*)
 
-(defvar *environment* nil)
-(declaim (inline current-environment))
-(defun current-environment ()
-  *environment*)
-(defmacro with-environment (env &body body)
-  `(let ((*environment* ,env))
-     ,@body))
+(defconstant +stack-var-offset+ 2)
 
 (defmacro specialize (&environment env var value possible-values &body body)
   `(ecase ,value
@@ -174,9 +168,10 @@
 (defun context-add-env-lexicals (context vars)
   ;; open a new variable context
     (let ((new-context (make-context context)))
-    (with-slots (lexicals env-hop)
+    (with-slots (lexicals env-hop stack-hop)
         new-context
-      (setq env-hop t)
+      (setq env-hop t
+            stack-hop t)
       (setq lexicals (loop for i fixnum from 0
                            for v in vars
                            collect (make-env-lexical v i))))
@@ -220,6 +215,16 @@
           do (incf stack-level)
         do (setq context (context-parent context))))
 
+
+(declaim (inline current-environment))
+(defun current-environment ()
+  (deref-stack (the fixnum (+ (the fixnum *fp*) 1))))
+(defmacro with-environment (env &body body)
+  `(with-stack-frame 0
+     (setf (deref-stack (the fixnum (+ (the fixnum *fp*) 1))) ,env)
+     ,@body))
+
+
 (deftype eval-closure () `(function () *))
 
 (declaim (inline environment-value))
@@ -239,7 +244,7 @@
 
 (declaim (inline call-with-stack))
 (defun call-with-stack (thunk)
-  (let ((*stack* (make-array '(10000) :initial-element '-))
+  (let ((*stack* (make-array '(10000) :initial-element nil))
         (*fp* 0)
         (*sp* 0))
     (funcall thunk)))
@@ -251,9 +256,10 @@
          (inline really-call-with-stack-frame))
 (defun really-call-with-stack-frame (nvars thunk)
   ;;(format t "~&; New frame (size ~d)" nvars)
-  (let* ((stack *stack*)
+  (let* ((env (current-environment))
+         (stack *stack*)
          (sp *sp*)
-         (new-size (+ sp nvars 1)))
+         (new-size (+ sp nvars +stack-var-offset+)))
     (declare (type stack stack)
              (type fixnum sp new-size))
     (loop for size fixnum = (array-dimension stack 0)
@@ -264,7 +270,8 @@
                                             (+ new-size (the fixnum
                                                              (round (* size 1.5))))))))
              (setq *stack* stack))
-    (setf (aref stack sp) (the fixnum *fp*))
+    (setf (aref stack sp)       (the fixnum *fp*)
+          (aref stack (+ sp 1)) env)
     (let ((*fp* sp)
           (*sp* new-size))
       (funcall thunk))))
@@ -292,12 +299,12 @@
   (let ((pos (the fixnum *fp*)))
     (dotimes (i nesting)
       (setq pos (the fixnum (deref-stack pos))))
-    (deref-stack (the fixnum (+ 1 offset pos)))))
+    (deref-stack (the fixnum (+ +stack-var-offset+ offset pos)))))
 
 (declaim (ftype (function (fixnum) *) stack-ref0)
          (inline stack-ref0))
 (defun stack-ref0 (offset)
-  (deref-stack (the fixnum (+ (the fixnum (+ 1 (the fixnum *fp*))) offset))))
+  (deref-stack (the fixnum (+ (the fixnum (+ +stack-var-offset+ (the fixnum *fp*))) offset))))
 
 (define-compiler-macro stack-ref (&whole form
                                   &environment env
@@ -310,7 +317,7 @@
                (let ((pos *fp*))
                  ,@(loop for i from 1 to num
                          collect `(setq pos (the fixnum (deref-stack pos))))
-                 (deref-stack (the fixnum (+ 1 (the fixnum (+ (the fixnum ,offset) pos)))))))))
+                 (deref-stack (the fixnum (+ +stack-var-offset+ (the fixnum (+ (the fixnum ,offset) pos)))))))))
       form))
 
 (declaim (ftype (function (* fixnum fixnum) *) (setf stack-ref))
@@ -320,12 +327,12 @@
     (declare (type fixnum pos))
     (dotimes (i nesting)
       (setq pos (deref-stack pos)))
-    (setf (deref-stack (the fixnum (+ 1 offset pos))) val)))
+    (setf (deref-stack (the fixnum (+ +stack-var-offset+ offset pos))) val)))
 
 (declaim (ftype (function (* fixnum) *) (setf stack-ref0))
          (inline (setf stack-ref0)))
 (defun (setf stack-ref0) (val offset)
-  (setf (deref-stack (the fixnum (+ (the fixnum (+ 1 (the fixnum *fp*))) offset))) val))
+  (setf (deref-stack (the fixnum (+ (the fixnum (+ +stack-var-offset+ (the fixnum *fp*))) offset))) val))
 
 (define-compiler-macro (setf stack-ref) (&whole form
                                          &environment env
@@ -338,7 +345,7 @@
                (let ((pos *fp*))
                  ,@(loop for i from 1 to num
                          collect `(setq pos (the fixnum (deref-stack pos))))
-                 (setf (deref-stack (the fixnum (+ 1 (the fixnum (+ (the fixnum ,offset) pos))))) ,val)))))
+                 (setf (deref-stack (the fixnum (+ +stack-var-offset+ (the fixnum (+ (the fixnum ,offset) pos))))) ,val)))))
       form))
 
 (declaim (ftype (function (symbol context) eval-closure) prepare-ref))
@@ -645,9 +652,7 @@
                                             bindings))
                      (vars (mapcar #'car real-bindings))
                      (envp (maybe-closes-over-p `(progn ,@body) vars))
-                     (binding-context (if envp
-                                          context
-                                          (context-bump-stack context)))
+                     (binding-context (context-bump-stack context))
                      (bindings* (mapcar (lambda (form)
                                           (cons (car form)
                                                 (prepare-form (cdr form)
