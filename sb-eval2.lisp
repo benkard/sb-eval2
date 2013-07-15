@@ -218,7 +218,9 @@
 
 (declaim (inline current-environment))
 (defun current-environment ()
-  (deref-stack (the fixnum (+ (the fixnum *fp*) 1))))
+  (if (boundp '*stack*)
+      (deref-stack (the fixnum (+ (the fixnum *fp*) 1)))
+      (make-null-environment)))
 (defmacro with-environment (env &body body)
   `(with-stack-frame 0
      (setf (deref-stack (the fixnum (+ (the fixnum *fp*) 1))) ,env)
