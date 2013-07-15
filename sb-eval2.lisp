@@ -251,27 +251,27 @@
           (sb-int:parse-lambda-list lambda-list)
         (when (or optional restp keyp allowp auxp morep)
           (return-from prepare-lambda (lambda (env) (lambda (&rest args) (error "NYI")))))
-       (if (< n 20)
-           (specialize m% n (loop for i from 0 below 20 collect i)
-             (let ((args (loop for i from 0 below m%
-                               collect (gensym (format nil "ARG~D-" i)))))
-               `(lambda (env)
-                  (lambda ,args
-                    ;; FIXME: non-simple lambda-lists
-                    (let ((new-env (make-environment env n)))
-                      ,@(loop for i from 0
-                              for val in args
-                              collect `(setf (environment-value new-env 0 ,i) ,val))
-                      (funcall body* new-env))))))
-           (lambda (env)
-             (lambda (&rest args)
-               (declare (dynamic-extent args))
-               ;; FIXME: non-simple lambda-lists
-               (let ((new-env (make-environment env n)))
-                 (loop for i from 0 to n
-                       for val in args
-                       do (setf (environment-value new-env 0 i) val))
-                 (funcall body* new-env)))))))))
+        (if (< n 20)
+            (specialize m% n (loop for i from 0 below 20 collect i)
+              (let ((args (loop for i from 0 below m%
+                                collect (gensym (format nil "ARG~D-" i)))))
+                `(lambda (env)
+                   (lambda ,args
+                     ;; FIXME: non-simple lambda-lists
+                     (let ((new-env (make-environment env n)))
+                       ,@(loop for i from 0
+                               for val in args
+                               collect `(setf (environment-value new-env 0 ,i) ,val))
+                       (funcall body* new-env))))))
+            (lambda (env)
+              (lambda (&rest args)
+                (declare (dynamic-extent args))
+                ;; FIXME: non-simple lambda-lists
+                (let ((new-env (make-environment env n)))
+                  (loop for i from 0 to n
+                        for val in args
+                        do (setf (environment-value new-env 0 i) val))
+                  (funcall body* new-env)))))))))
 
 (defun context->native-environment (context)
   ;;FIXME
