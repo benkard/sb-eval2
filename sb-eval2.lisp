@@ -5,8 +5,6 @@
 
 (in-package "SB-EVAL2")
 
-#+(or)
-(setq SB-EXT:*EVALUATOR-MODE* :interpret)
 
 (defstruct (environment (:constructor make-environment (parent
                                                         &optional (size 0)
@@ -24,10 +22,6 @@
 
 (defun lexical-with-nesting (lexical nesting)
   (make-lexical (lexical-name lexical) (lexical-offset lexical) nesting))
-
-(defstruct (box (:constructor make-box (value)))
-  value)
-(defun unbox (box) (box-value box))
 
 (defstruct (context (:constructor make-context (&optional parent)))
   parent
