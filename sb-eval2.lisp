@@ -471,31 +471,54 @@
       (declare (ignorable required optional restp rest keyp keys allowp auxp aux
                           morep more-context more-count))
       (let* ((argvars lambda-list)    ;fixme
-             (n (length (the list lambda-list))))
-        (if (maybe-closes-over-p `(progn ,@body) argvars)
-            (let* ((new-context (context-add-env-lexicals context argvars))
-                   (body* (prepare-progn body new-context)))
-              (lambda ()
-                (lambda (&rest args)
-                  (declare (dynamic-extent args))
-                  ;; FIXME: non-simple lambda-lists
-                  (let ((new-env (make-environment (current-environment) n)))
-                    (loop for i from 0 to n
-                          for val in args
-                          do (setf (environment-value new-env 0 i) val))
+             (n (length (the list lambda-list)))
+             (envp (maybe-closes-over-p `(progn ,@body) argvars))
+             (new-context (if envp
+                              (context-add-env-lexicals context argvars)
+                              (context-add-stack-lexicals context argvars)))
+             (body* (prepare-progn body new-context)))
+        (if (< n 20)
+            (specialize m% n (loop for i from 0 below 20 collect i)
+              (let ((args (loop for i from 0 below m%
+                                collect (gensym (format nil "ARG~D-" i)))))
+                `(if envp
+                     (lambda ()
+                       (lambda ,args
+                         ;; FIXME: non-simple lambda-lists
+                         (let ((new-env (make-environment (current-environment) ,m%)))
+                           ,@(loop for i from 0
+                                   for val in args
+                                   collect `(setf (environment-value new-env 0 ,i) ,val))
+                           (with-environment new-env
+                             (funcall body*)))))
+                     (lambda ()
+                       (lambda ,args
+                         ;; FIXME: non-simple lambda-lists
+                         (with-stack-frame ,m%
+                           ,@(loop for i from 0
+                                   for val in args
+                                   collect `(setf (stack-ref 0 ,i) ,val))
+                           (funcall body*)))))))
+            (if envp
+                (lambda ()
+                  (lambda (&rest args)
+                    (declare (dynamic-extent args))
+                    ;; FIXME: non-simple lambda-lists
+                    (let ((new-env (make-environment (current-environment) n)))
+                      (loop for i from 0 to n
+                            for val in args
+                            do (setf (environment-value new-env 0 i) val))
                     (with-environment new-env
-                      (funcall body*))))))
-            (let* ((new-context (context-add-stack-lexicals context argvars))
-                   (body* (prepare-progn body new-context)))
-              (lambda ()
-                (lambda (&rest args)
-                  (declare (dynamic-extent args))
-                  ;; FIXME: non-simple lambda-lists
-                  (with-stack-frame n
-                    (loop for i from 0 below n
-                          for val in args
-                          do (setf (stack-ref 0 i) val))
-                    (funcall body*))))))))))
+                      (funcall body*)))))
+                (lambda ()
+                  (lambda (&rest args)
+                    (declare (dynamic-extent args))
+                    ;; FIXME: non-simple lambda-lists
+                    (with-stack-frame n
+                      (loop for i from 0 below n
+                            for val in args
+                            do (setf (stack-ref 0 i) val))
+                      (funcall body*))))))))))
 
 (defun context->native-environment (context)
   ;;FIXME
