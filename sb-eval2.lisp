@@ -455,9 +455,9 @@
         (sb-int:parse-lambda-list lambda-list)
       (declare (ignorable required optional restp rest keyp keys allowp auxp aux
                           morep more-context more-count))
-        (when (or optional restp keyp allowp auxp morep)
-          (return-from prepare-lambda (lambda (env) (lambda (&rest args) (error "NYI")))))
-        (let* ((argvars lambda-list)    ;fixme
+      (when (or optional restp keyp allowp auxp morep)
+        (return-from prepare-lambda (lambda (env) (lambda (&rest args) (error "NYI")))))
+      (let* ((argvars lambda-list)    ;fixme
              (n (length (the list lambda-list)))
              (envp (maybe-closes-over-p `(progn ,@body) argvars))
              (new-context (if envp
