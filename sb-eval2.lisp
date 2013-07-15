@@ -5,8 +5,8 @@
 
 (in-package "SB-EVAL2")
 
-#+(or)
-(setq SB-EXT:*EVALUATOR-MODE* :interpret)
+;;(declaim (optimize (debug 3) (space 0) (speed 0) (safety 3) (compilation-speed 0)))
+(declaim (optimize (debug 0) (space 0) (speed 3) (safety 0) (compilation-speed 0)))
 
 (defvar *stack*)
 (defvar *fp*)
@@ -95,10 +95,6 @@
              (maybe-closes-over-p b vars)))))))
     (t
      nil)))
-
-(defstruct (box (:constructor make-box (value)))
-  value)
-(defun unbox (box) (box-value box))
 
 (defstruct (context (:constructor make-context (&optional parent)))
   parent
