@@ -12,6 +12,12 @@
 (defvar *fp*)
 (defvar *sp*)
 
+(defmacro specialize (&environment env var value possible-values &body body)
+  `(ecase ,value
+     ,@(loop for x in (sb-int:eval-in-lexenv possible-values env)
+             collect
+                `((,x) ,(sb-int:eval-in-lexenv `(let ((,var ,x)) ,@body) env)))))
+
 (deftype stack ()
   'simple-vector)
 
@@ -40,6 +46,7 @@
 (defun make-env-lexical (name offset &optional (nesting -1))
   (make-instance 'env-lexical :name name :offset offset :nesting nesting))
 
+(defgeneric lexical-with-nesting (lexical nesting))
 (defmethod lexical-with-nesting ((lexical stack-lexical) nesting)
   (make-stack-lexical (lexical-name lexical) (lexical-offset lexical) nesting))
 (defmethod lexical-with-nesting ((lexical env-lexical) nesting)
@@ -265,13 +272,37 @@
 (defun deref-stack (pos)
   (aref (the stack *stack*) pos))
 
+(declaim (ftype (function (* fixnum) *) (setf deref-stack))
+         (inline (setf deref-stack)))
+(defun (setf deref-stack) (val pos)
+  (setf (aref (the stack *stack*) pos) val))
+
 (declaim (ftype (function (fixnum fixnum) *) stack-ref)
          (inline stack-ref))
 (defun stack-ref (nesting offset)
   (let ((pos (the fixnum *fp*)))
     (dotimes (i nesting)
       (setq pos (the fixnum (deref-stack pos))))
-    (aref (the stack *stack*) (the fixnum (+ 1 offset pos)))))
+    (deref-stack (the fixnum (+ 1 offset pos)))))
+
+(declaim (ftype (function (fixnum) *) stack-ref0)
+         (inline stack-ref0))
+(defun stack-ref0 (offset)
+  (deref-stack (the fixnum (+ (the fixnum (+ 1 (the fixnum *fp*))) offset))))
+
+(define-compiler-macro stack-ref (&whole form
+                                  &environment env
+                                  nesting offset)
+  (if (constantp nesting env)
+      (let ((num (sb-int:eval-in-lexenv nesting env)))
+        (if (zerop num)
+            `(stack-ref0 (the fixnum ,offset))
+            `(progn
+               (let ((pos *fp*))
+                 ,@(loop for i from 1 to num
+                         collect `(setq pos (the fixnum (deref-stack pos))))
+                 (deref-stack (the fixnum (+ 1 (the fixnum (+ (the fixnum ,offset) pos)))))))))
+      form))
 
 (declaim (ftype (function (* fixnum fixnum) *) (setf stack-ref))
          (inline (setf stack-ref)))
@@ -280,7 +311,26 @@
     (declare (type fixnum pos))
     (dotimes (i nesting)
       (setq pos (deref-stack pos)))
-    (setf (aref (the stack *stack*) (the fixnum (+ 1 offset pos))) val)))
+    (setf (deref-stack (the fixnum (+ 1 offset pos))) val)))
+
+(declaim (ftype (function (* fixnum) *) (setf stack-ref0))
+         (inline (setf stack-ref0)))
+(defun (setf stack-ref0) (val offset)
+  (setf (deref-stack (the fixnum (+ (the fixnum (+ 1 (the fixnum *fp*))) offset))) val))
+
+(define-compiler-macro (setf stack-ref) (&whole form
+                                         &environment env
+                                         val nesting offset)
+  (if (constantp nesting env)
+      (let ((num (sb-int:eval-in-lexenv nesting env)))
+        (if (zerop num)
+            `(setf (stack-ref0 (the fixnum ,offset)) ,val)
+            `(progn
+               (let ((pos *fp*))
+                 ,@(loop for i from 1 to num
+                         collect `(setq pos (the fixnum (deref-stack pos))))
+                 (setf (deref-stack (the fixnum (+ 1 (the fixnum (+ (the fixnum ,offset) pos))))) ,val)))))
+      form))
 
 (declaim (ftype (function (symbol context) eval-closure) prepare-ref))
 (defun prepare-ref (var context)
@@ -293,9 +343,16 @@
            (lambda (env)
              (environment-value env nesting offset)))
           (stack-lexical
-           (lambda (env)
-             (declare (ignore env))
-             (stack-ref nesting offset)))))
+           (if (< nesting 20)
+               (specialize m% nesting (loop for i from 0 below 20 collect i)
+                 `(lambda (env)
+                    (declare (ignore env))
+                    ;;(format t "~&; stack-ref ~d ~d" nesting offset)
+                    (stack-ref ,m% offset)))
+               (lambda (env)
+                 (declare (ignore env))
+                 ;;(format t "~&; stack-ref ~d ~d" nesting offset)
+                 (stack-ref nesting offset))))))
       (lambda (env)
         (declare (ignore env))
         (symbol-value var))))
@@ -325,12 +382,6 @@
 (declaim (ftype (function () eval-closure) prepare-nil))
 (defun prepare-nil ()
   (lambda (env) (declare (ignore env))))
-
-(defmacro specialize (&environment env var value possible-values &body body)
-  `(ecase ,value
-     ,@(loop for x in (sb-int:eval-in-lexenv possible-values env)
-             collect
-                `((,x) ,(sb-int:eval-in-lexenv `(let ((,var ,x)) ,@body) env)))))
 
 (declaim (ftype (function ((or symbol list) list context) eval-closure) prepare-local-call))
 (defun prepare-local-call (f args context)
@@ -499,9 +550,16 @@
                                                          (lexical-offset lexical?))
                                       value))
                                (stack-lexical
-                                (setf (stack-ref (lexical-nesting lexical?)
-                                                 (lexical-offset lexical?))
-                                      value))
+                                (let ((nesting (lexical-nesting lexical?))
+                                      (offset (lexical-offset lexical?)))
+                                  (if (< nesting 20)
+                                      (specialize m%
+                                          nesting
+                                          (loop for i from 0 below 20 collect i)
+                                        `(setf (stack-ref ,m% offset)
+                                               value))
+                                      (setf (stack-ref nesting offset)
+                                            value))))
                                (null
                                 (setf (symbol-value var) value))))
                         finally (return result))))))
