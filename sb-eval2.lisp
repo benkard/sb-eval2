@@ -690,6 +690,10 @@
                                              (funcall val env))
                                        (funcall more new-env)))))))))
                 (prepare-let* bindings context))))
+           ((load-time-value)
+            (let ((load-form (cadr form)))
+              ;; FIXME
+              (prepare-form load-form)))
            ((locally)
             (prepare-nil))
            ((multiple-value-call)
