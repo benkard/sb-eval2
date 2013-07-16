@@ -255,22 +255,20 @@
 (defun really-call-with-stack-frame (nvars thunk)
   ;;(format t "~&; New frame (size ~d)" nvars)
   (let* ((env (current-environment))
-         (stack *stack*)
-         (sp *sp*)
-         (new-size (+ sp nvars +stack-var-offset+)))
-    (declare (type stack stack)
-             (type fixnum sp new-size))
-    (loop for size fixnum = (array-dimension stack 0)
+         (new-size (the fixnum
+                        (+ (the fixnum *sp*)
+                           (the fixnum (+ nvars +stack-var-offset+))))))
+    (declare (type fixnum new-size))
+    (loop for size fixnum = (array-dimension *stack* 0)
           while (< size new-size)
-          do (setq stack
-                   (adjust-array stack
+          do (setq *stack*
+                   (adjust-array *stack*
                                  (list (the fixnum
                                             (+ new-size (the fixnum
-                                                             (round (* size 1.5))))))))
-             (setq *stack* stack))
-    (setf (aref stack sp)       (the fixnum *fp*)
-          (aref stack (+ sp 1)) env)
-    (let ((*fp* sp)
+                                                             (round (* size 1.5)))))))))
+    (setf (aref (the stack *stack*) *sp*)                    (the fixnum *fp*)
+          (aref (the stack *stack*) (+ (the fixnum *sp*) 1)) env)
+    (let ((*fp* *sp*)
           (*sp* new-size))
       (funcall thunk))))
 
