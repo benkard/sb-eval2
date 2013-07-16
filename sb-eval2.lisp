@@ -437,6 +437,31 @@
         (dolist (form* body* result)
           (setq result (funcall (the eval-closure form*) env)))))))
 
+(defun lambda-binding-vars (entry)
+  (etypecase entry
+    (cons   (list (first entry)
+                  (if (cddr entry)
+                      (third entry)
+                      (gensym))))
+    (symbol (list entry (gensym)))))
+
+(defun lambda-simple-binding-vars (entry)
+  (etypecase entry
+    (cons   (list (first entry)))
+    (symbol (list entry))))
+
+(defun lambda-binding-default (entry)
+  (etypecase entry
+    (cons   (second entry))
+    (symbol nil)))
+
+(defun lambda-key (entry)
+  (flet ((keywordify (sym)
+           (intern (symbol-name sym) "KEYWORD")))
+    (etypecase entry
+      (cons   (keywordify (first entry)))
+      (symbol (keywordify entry)))))
+
 (declaim (ftype (function (list context) eval-closure) prepare-lambda))
 (defun prepare-lambda (lambda-form context)
   (destructuring-bind (lambda-list &rest body) lambda-form
@@ -444,34 +469,120 @@
     (multiple-value-bind (required optional restp rest keyp keys allowp auxp aux
                           morep more-context more-count)
         (sb-int:parse-lambda-list lambda-list)
-      (declare (ignorable required optional restp rest keyp keys allowp auxp aux
-                          morep more-context more-count))
-      (when (or optional restp keyp allowp auxp morep)
-        (return-from prepare-lambda (lambda (env) (lambda (&rest args) (error "NYI")))))
-      (let* ((argvars lambda-list)    ;fixme
-             (n (length (the list lambda-list)))
+      (declare (ignore more-context more-count))
+      (declare (ignorable allowp auxp))
+      (when morep
+        (error "The interpreter does not support the lambda-list keyword ~D"
+               'sb-int:&more))
+      (let* ((argvars (append required
+                              (mapcan #'lambda-binding-vars optional)
+                              (mapcan #'lambda-binding-vars keys)
+                              (mapcan #'lambda-simple-binding-vars aux)
+                              (and restp (list rest))))
+             (keywords (mapcar #'lambda-key keys))
+             #+(or) (simplep (not (or optional restp keyp allowp auxp)))
+             (required-num (length required))
+             (optional-num (length optional))
+             (key-num (length keys))
+             (aux-num (length aux))
+             (varnum (length argvars))
              (envp (maybe-closes-over-p `(progn ,@body) argvars))
              (new-context (if envp
                               (context-add-env-lexicals context argvars)
                               (context-add-stack-lexicals context argvars)))
-             (body* (prepare-progn body new-context)))
-        (if envp
-            (lambda (env)
-              (lambda (&rest args)
-                (declare (dynamic-extent args))
-                (let ((new-env (make-environment env n)))
-                  ;; This is not as inefficient as it looks.  SBCL
-                  ;; transforms &rest into &more here.
-                  (dotimes (i n)
-                    (setf (environment-value new-env 0 i) (elt args i)))
-                  (funcall body* new-env))))
-            (lambda (env)
-              (lambda (&rest args)
-                (declare (dynamic-extent args))
-                (with-stack-frame n
-                  (dotimes (i n)
-                    (setf (stack-ref 0 i) (elt args i)))
-                  (funcall body* env)))))))))
+             (default-values (append (mapcar #'lambda-binding-default optional)
+                                     (mapcar #'lambda-binding-default keys)
+                                     (mapcar #'lambda-binding-default aux)))
+             (default-values*
+               (mapcar (lambda (x) (prepare-form x new-context)) default-values))
+             (body* (prepare-progn body new-context))
+             (unbound (gensym)))
+        (macrolet ((handle-arguments (args env-ref env)
+                     ;; All this ELT and LENGTH stuff is not as
+                     ;; inefficient as it looks.  SBCL transforms
+                     ;; &rest into &more here.
+                     `(let ((rest
+                              (when (or restp keyp)
+                                (loop for i
+                                      from (+ required-num optional-num)
+                                      below (length ,args)
+                                      collect (elt ,args i)))))
+                        (prog ((argi 0)
+                               (vari 0))
+                           (declare (type fixnum argi vari))
+                         positional
+                           (when (>= argi (length ,args))
+                             (go missing-optionals))
+                           (when (>= argi (the fixnum (+ required-num optional-num)))
+                             (go keys))
+                           (setf (,@env-ref 0 vari) (elt ,args argi))
+                           (when (>= argi required-num)
+                             (pop default-values*)
+                             (incf vari)
+                             (setf (,@env-ref 0 vari) t))
+                           (incf vari)
+                           (incf argi)
+                           (go positional)
+                         missing-optionals
+                           (assert (>= argi required-num))
+                           (when (>= vari (the fixnum (+ required-num (the fixnum (* 2 optional-num)))))
+                             (go keys))
+                           (let ((val* (pop default-values*)))
+                             (setf (,@env-ref 0 vari)
+                                   (funcall (the eval-closure val*) ,env)
+                                   (,@env-ref 0 (1+ vari))
+                                   nil))
+                           (incf vari 2)
+                           (go missing-optionals)
+                         keys
+                           (when (>= vari
+                                     (the fixnum
+                                          (+ required-num (* 2 (+ optional-num key-num)))))
+                             (go aux))
+                           (let* ((key  (the keyword (pop keywords)))
+                                  (val* (pop default-values*))
+                                  (x    (getf rest key unbound)))
+                             (if (eq unbound x)
+                                 (setf (,@env-ref 0 vari)
+                                       (funcall (the eval-closure val*) ,env)
+                                       (,@env-ref 0 (1+ vari))
+                                       nil)
+                                 (setf (,@env-ref 0 vari)
+                                       x
+                                       (,@env-ref 0 (1+ vari))
+                                       t)))
+                           (incf vari 2)
+                           (go keys)
+                         aux
+                           (when (>= vari
+                                     (the fixnum
+                                          (+ required-num
+                                             (the fixnum (* 2 (+ optional-num key-num)))
+                                             aux-num)))
+                             (go rest))
+                           (let ((val* (pop default-values*)))
+                             (setf (,@env-ref 0 vari)
+                                   (funcall (the eval-closure val*) ,env)))
+                           (incf vari)
+                           (go aux)
+                         rest
+                           (assert (null default-values*))
+                           (when restp
+                             (setf (,@env-ref 0 (1- varnum))
+                                   rest))))))
+          (if envp
+              (lambda (env)
+                (lambda (&rest args)
+                  (declare (dynamic-extent args))
+                  (let ((new-env (make-environment env varnum)))
+                    (handle-arguments args (environment-value new-env) new-env)
+                    (funcall body* new-env))))
+              (lambda (env)
+                (lambda (&rest args)
+                  (declare (dynamic-extent args))
+                  (with-stack-frame varnum
+                    (handle-arguments args (stack-ref) env)
+                    (funcall body* env))))))))))
 
 
 (defun context->native-environment (context)
@@ -869,3 +980,13 @@
                          5 7)
                        (make-null-context))
          (make-null-environment))
+
+#+(or)
+(with-stack ()
+  (funcall (funcall
+            (prepare-form
+             '(lambda (a b &optional c (d 10 dp) &rest r &key e (f 12 fp) (g 12 gp) &aux (h 1) (i 2))
+               (list a b c d dp e f fp g gp r h i)))
+            (make-null-environment))
+           1 2 3 4 :f 5 :e 6))
+;; => (1 2 3 4 T 6 5 T 12 NIL (:F 5 :E 6) 1 2)
