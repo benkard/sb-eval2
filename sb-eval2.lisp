@@ -174,6 +174,12 @@
                            for v in vars
                            collect (make-env-lexical v i))))
     new-context))
+(defun context-add-env-lexical! (context var)
+  ;; open a new variable context
+  (with-slots (lexicals)
+      context
+    (push (make-env-lexical var (length lexicals)) lexicals))
+  (values))
 (defun context-add-env-functions (context fs)
   (context-add-env-lexicals context (mapcar (lambda (x) `(function ,x)) fs)))
 (defun context-find-lexical (context var)
@@ -313,6 +319,13 @@
                       (gensym))))
     (symbol (list entry (gensym)))))
 
+(defun lambda-binding-main-var (entry)
+  (etypecase entry
+    (cons   (etypecase (first entry)
+              (cons   (second (first entry)))
+              (symbol (first entry))))
+    (symbol entry)))
+
 (defun lambda-simple-binding-vars (entry)
   (etypecase entry
     (cons   (list (first entry)))
@@ -358,12 +371,16 @@
              (varnum (length argvars))
              (envp (or (> varnum +stack-max+)
                        (maybe-closes-over-p `(progn ,@body) argvars)))
-             (new-context (context-add-env-lexicals context argvars))
              (default-values (append (mapcar #'lambda-binding-default optional)
                                      (mapcar #'lambda-binding-default keys)
                                      (mapcar #'lambda-binding-default aux)))
+             (new-context (context-add-env-lexicals context required))
              (default-values*
-               (mapcar (lambda (x) (prepare-form x new-context)) default-values))
+               (loop for default-value in default-values
+                     for binding in (append optional keys aux)
+                     for var = (lambda-binding-main-var binding)
+                     collect (prepare-form default-value new-context)
+                     do (context-add-env-lexical! context var)))
              (body* (prepare-progn body new-context))
              (unbound (gensym)))
         (macrolet ((handle-arguments (args env)
