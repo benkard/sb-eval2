@@ -458,7 +458,9 @@
 
 (defun lambda-binding-vars (entry)
   (etypecase entry
-    (cons   (list (first entry)
+    (cons   (list (etypecase (first entry)
+                    (cons   (second (first entry)))
+                    (symbol (first entry)))
                   (if (cddr entry)
                       (third entry)
                       (gensym))))
@@ -478,7 +480,9 @@
   (flet ((keywordify (sym)
            (intern (symbol-name sym) "KEYWORD")))
     (etypecase entry
-      (cons   (keywordify (first entry)))
+      (cons   (etypecase (first entry)
+                (cons   (first (first entry)))
+                (symbol (keywordify (first entry)))))
       (symbol (keywordify entry)))))
 
 (declaim (ftype (function (list context) eval-closure) prepare-lambda))
