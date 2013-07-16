@@ -653,7 +653,7 @@
               (let ((f* (prepare-form f context))
                     (argforms* (mapcar (lambda (x) (prepare-form x context)) argforms)))
                 (lambda (env)
-                  (apply f* (mapcan (lambda (arg) (multiple-value-list (funcall arg env))) argforms*))))))
+                  (apply f* (mapcan (lambda (arg) (multiple-value-list (funcall (the eval-closure arg) env))) argforms*))))))
            ((multiple-value-prog1)
             (destructuring-bind (values-form &body body) (rest form)
               (let ((values-form* (prepare-form values-form context))
