@@ -455,46 +455,23 @@
                               (context-add-env-lexicals context argvars)
                               (context-add-stack-lexicals context argvars)))
              (body* (prepare-progn body new-context)))
-        (if (< n 20)
-            (specialize m% n (loop for i from 0 below 20 collect i)
-              (let ((args (loop for i from 0 below m%
-                                collect (gensym (format nil "ARG~D-" i)))))
-                `(if envp
-                     (lambda (env)
-                       (lambda ,args
-                         ;; FIXME: non-simple lambda-lists
-                         (let ((new-env (make-environment env ,m%)))
-                           ,@(loop for i from 0
-                                   for val in args
-                                   collect `(setf (environment-value new-env 0 ,i) ,val))
-                           (funcall body* new-env))))
-                     (lambda (env)
-                       (lambda ,args
-                         ;; FIXME: non-simple lambda-lists
-                         (with-stack-frame ,m%
-                           ,@(loop for i from 0
-                                   for val in args
-                                   collect `(setf (stack-ref 0 ,i) ,val))
-                           (funcall body* env)))))))
-            (if envp
-                (lambda (env)
-                  (lambda (&rest args)
-                    (declare (dynamic-extent args))
-                    ;; FIXME: non-simple lambda-lists
-                    (let ((new-env (make-environment env n)))
-                      (loop for i from 0 to n
-                            for val in args
-                            do (setf (environment-value new-env 0 i) val))
-                      (funcall body* new-env))))
-                (lambda (env)
-                  (lambda (&rest args)
-                    (declare (dynamic-extent args))
-                    ;; FIXME: non-simple lambda-lists
-                    (with-stack-frame n
-                      (loop for i from 0 below n
-                            for val in args
-                            do (setf (stack-ref 0 i) val))
-                      (funcall body* env))))))))))
+        (if envp
+            (lambda (env)
+              (lambda (&rest args)
+                (declare (dynamic-extent args))
+                (let ((new-env (make-environment env n)))
+                  ;; This is not as inefficient as it looks.  SBCL
+                  ;; transforms &rest into &more here.
+                  (dotimes (i n)
+                    (setf (environment-value new-env 0 i) (elt args i)))
+                  (funcall body* new-env))))
+            (lambda (env)
+              (lambda (&rest args)
+                (declare (dynamic-extent args))
+                (with-stack-frame n
+                  (dotimes (i n)
+                    (setf (stack-ref 0 i) (elt args i)))
+                  (funcall body* env)))))))))
 
 
 (defun context->native-environment (context)
