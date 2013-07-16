@@ -419,7 +419,8 @@
 
 (declaim (ftype (function ((or symbol list) list context) eval-closure) prepare-global-call))
 (defun prepare-global-call (f args context)
-  (let ((args* (mapcar (lambda (form) (prepare-form form context)) args)))
+  (let ((args* (mapcar (lambda (form) (prepare-form form context)) args))
+        (f* (sb-c::fdefinition-object f t)))
     (if (< (length args) 20)
         (specialize m% (length args) (loop for i from 0 below 20 collect i)
           (let ((argvars (loop for i from 0 below m%
@@ -427,24 +428,15 @@
             `(let ,(loop for var in argvars
                          for i from 0 below m%
                          collect `(,var (nth ,i args*)))
-               (if (fboundp f)
-                   (let ((f* (fdefinition f)))
-                     (lambda ()
-                       (funcall f*
-                                ,@(loop for var in argvars
-                                        collect `(funcall (the eval-closure ,var))))))
-                   (lambda ()
-                     (funcall (fdefinition f)
-                              ,@(loop for var in argvars
-                                      collect `(funcall (the eval-closure ,var)))))))))
-        (if (fboundp f)
-            (let ((f* (fdefinition f)))
-              (lambda ()
-                (apply f*
-                       (mapcar (lambda (x) (funcall (the eval-closure x))) args*))))
-            (lambda ()
-              (apply (fdefinition f)
-                     (mapcar (lambda (x) (funcall (the eval-closure x))) args*)))))))
+               (lambda ()
+                 (funcall (or (sb-c::fdefn-fun f*)
+                              (error 'undefined-function :name f))
+                          ,@(loop for var in argvars
+                                  collect `(funcall (the eval-closure ,var))))))))
+        (lambda ()
+          (apply (or (sb-c::fdefn-fun f*)
+                     (error 'undefined-function :name f))
+                 (mapcar (lambda (x) (funcall (the eval-closure x))) args*))))))
 
 (declaim (ftype (function (eval-closure list context) eval-closure) prepare-direct-call))
 (defun prepare-direct-call (f args context)
