@@ -612,17 +612,12 @@
                      (varnum (length vars))
                      (envp (or (> varnum +stack-max+)
                                (maybe-closes-over-p `(progn ,@body) vars)))
-                     (binding-context context)
-                     (bindings* (mapcar (lambda (form)
-                                          (cons (car form)
-                                                (prepare-form (cdr form)
-                                                              binding-context)))
-                                        real-bindings))
                      (n (length (the list bindings)))
-                     (values* (mapcar #'cdr bindings*))
                      (new-context
-                       (context-add-env-lexicals context
-                                                 (mapcar #'first bindings*)))
+                       (context-add-env-lexicals context (list)))
+                     (values* (loop for (var . value-form) in real-bindings
+                                    collect (prepare-form value-form context)
+                                    do (context-add-env-lexical! context var)))
                      (body*
                        (prepare-progn body new-context)))
                 (if envp
@@ -643,22 +638,38 @@
            ((let*)
             ;; FIXME: SPECIAL declarations!
             (destructuring-bind (bindings &rest body) (rest form)
-              (labels ((prepare-let* (bindings context)
-                         (the (values eval-closure &rest nil)
-                           (if (endp bindings)
-                               (prepare-progn body context)
-                               (destructuring-bind (binding . rest-bindings) bindings
-                                 (let* ((var  (if (listp binding) (first binding) binding))
-                                        (val  (if (listp binding) (prepare-form (second binding) context) (prepare-nil)))
-                                      
-                                        (new-context (context-add-env-lexicals context (list var)))
-                                        (more (prepare-let* rest-bindings new-context)))
-                                   (lambda (env)
-                                     (let ((new-env (make-environment env 1)))
-                                       (setf (environment-value new-env 0 0)
-                                             (funcall val env))
-                                       (funcall more new-env)))))))))
-                (prepare-let* bindings context))))
+              (let* ((real-bindings (mapcar (lambda (form)
+                                              (if (listp form)
+                                                  (cons (first form) (second form))
+                                                  (cons form nil)))
+                                            bindings))
+                     (vars (mapcar #'car real-bindings))
+                     (varnum (length vars))
+                     (envp (or (> varnum +stack-max+)
+                               (maybe-closes-over-p `(progn ,@body) vars)))
+                     (n (length (the list bindings)))
+                     (new-context
+                       (context-add-env-lexicals context (list)))
+                     (values* (loop for (var . value-form) in real-bindings
+                                    collect (prepare-form value-form new-context)
+                                    do (context-add-env-lexical! context var)))
+                     (body*
+                       (prepare-progn body new-context)))
+                (if envp
+                    (lambda (env)
+                      (let ((new-env (make-environment env n)))
+                        (loop for i from 0 below n
+                              for val* in values*
+                              do (setf (environment-value new-env 0 i)
+                                       (funcall (the eval-closure val*) new-env)))
+                        (funcall body* new-env)))
+                    (lambda (env)
+                      (with-dynamic-extent-environment (new-env env n)
+                        (loop for i from 0 below n
+                              for val* in values*
+                              do (setf (environment-value new-env 0 i)
+                                       (funcall (the eval-closure val*) new-env)))
+                        (funcall body* new-env)))))))
            ((load-time-value)
             (let ((load-form (cadr form)))
               ;; FIXME
