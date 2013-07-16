@@ -21,14 +21,33 @@
 (deftype stack ()
   'simple-vector)
 
-(defstruct (environment (:constructor make-environment (parent
-                                                        &optional (size 0)
-                                                        &aux (data
-                                                              (make-array
-                                                               (list size))))))
+(declaim (inline %make-environment))
+(defstruct (environment (:constructor %make-environment))
   (parent nil :type (or null environment))
-  (data nil :type simple-vector))
+  (data nil :type (or null simple-vector)))
+
+(declaim (inline make-null-environment))
 (defun make-null-environment () (make-environment nil 0))
+
+(declaim (inline make-environment))
+(defun make-environment (parent
+                         &optional (size 0)
+                         &aux (data
+                               (unless (zerop (the fixnum size))
+                                 (make-array
+                                  (list size)))))
+  (%make-environment :parent parent :data data))
+
+(defmacro with-dynamic-extent-environment ((var parent size) &body body)
+  (let ((data% (gensym))
+        (size% (gensym)))
+    `(let* ((,size% ,size)
+            (,data% (make-array (list ,size%)))
+            (,var (%make-environment :parent ,parent :data ,data%)))
+       (declare (type (mod 1000) ,size%)
+                (dynamic-extent ,var)
+                (dynamic-extent ,data%))
+       ,@body)))
 
 (defclass lexical ()
   ((name    :accessor lexical-name    :initarg :name    :type (or symbol list))))
@@ -486,10 +505,9 @@
              (key-num (length keys))
              (aux-num (length aux))
              (varnum (length argvars))
-             (envp (maybe-closes-over-p `(progn ,@body) argvars))
-             (new-context (if envp
-                              (context-add-env-lexicals context argvars)
-                              (context-add-stack-lexicals context argvars)))
+             (envp (or (> varnum 1000)
+                       (maybe-closes-over-p `(progn ,@body) argvars)))
+             (new-context (context-add-env-lexicals context argvars))
              (default-values (append (mapcar #'lambda-binding-default optional)
                                      (mapcar #'lambda-binding-default keys)
                                      (mapcar #'lambda-binding-default aux)))
@@ -580,9 +598,9 @@
               (lambda (env)
                 (lambda (&rest args)
                   (declare (dynamic-extent args))
-                  (with-stack-frame varnum
-                    (handle-arguments args (stack-ref) env)
-                    (funcall body* env))))))))))
+                  (with-dynamic-extent-environment (new-env env varnum)
+                    (handle-arguments args (environment-value new-env) new-env)
+                    (funcall body* new-env))))))))))
 
 
 (defun context->native-environment (context)
