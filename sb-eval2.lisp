@@ -475,6 +475,9 @@
   (declare (ignore context))
   (sb-c::internal-make-lexenv nil nil nil nil nil nil nil nil nil nil nil))
 
+(defun globally-special-p (var)
+  (eq :special (sb-int:info :variable :kind var)))
+
 (declaim (ftype (function (* &optional context) eval-closure) prepare-form))
 (defun prepare-form (form &optional (context (make-null-context)))
   ;;(declare (optimize speed (safety 0) (space 1) (debug 0)))
@@ -615,26 +618,44 @@
                      (n (length (the list bindings)))
                      (new-context
                        (context-add-env-lexicals context (list)))
-                     (values* (loop for (var . value-form) in real-bindings
-                                    collect (prepare-form value-form context)
-                                    do (context-add-env-lexical! context var)))
-                     (body*
-                       (prepare-progn body new-context)))
-                (if envp
-                    (lambda (env)
-                      (let ((new-env (make-environment env n)))
-                        (loop for i from 0 below n
-                              for val* in values*
-                              do (setf (environment-value new-env 0 i)
-                                       (funcall (the eval-closure val*) env)))
-                        (funcall body* new-env)))
-                    (lambda (env)
-                      (with-dynamic-extent-environment (new-env env n)
-                        (loop for i from 0 below n
-                              for val* in values*
-                              do (setf (environment-value new-env 0 i)
-                                       (funcall (the eval-closure val*) env)))
-                        (funcall body* new-env)))))))
+                     lexical-values*
+                     special-bindings*)
+                (loop for (var . value-form) in real-bindings
+                      for val* = (prepare-form value-form context)
+                      if (globally-special-p var)
+                      collect (cons var val*) into specials 
+                      else
+                      collect val* into lexicals
+                      and do (context-add-env-lexical! new-context var)
+                      finally
+                         (setq lexical-values* lexicals
+                               special-bindings* specials))
+                (let ((body* (prepare-progn body new-context))
+                      (special-vars  (mapcar #'car special-bindings*))
+                      (special-vals* (mapcar #'cdr special-bindings*)))
+                  (if envp
+                      (lambda (env)
+                        (let ((new-env (make-environment env n)))
+                          (loop for i from 0 below n
+                                for val* in lexical-values*
+                                do (setf (environment-value new-env 0 i)
+                                         (funcall (the eval-closure val*) env)))
+                          (progv
+                              special-vars
+                              (loop for val* in special-vals*
+                                    collect (funcall (the eval-closure val*) env))
+                           (funcall body* new-env))))
+                      (lambda (env)
+                        (with-dynamic-extent-environment (new-env env n)
+                          (loop for i from 0 below n
+                                for val* in lexical-values*
+                                do (setf (environment-value new-env 0 i)
+                                         (funcall (the eval-closure val*) env)))
+                          (progv
+                              special-vars
+                              (loop for val* in special-vals*
+                                    collect (funcall (the eval-closure val*) env))
+                            (funcall body* new-env)))))))))
            ((let*)
             ;; FIXME: SPECIAL declarations!
             (destructuring-bind (bindings &rest body) (rest form)
@@ -651,25 +672,51 @@
                      (new-context
                        (context-add-env-lexicals context (list)))
                      (values* (loop for (var . value-form) in real-bindings
-                                    collect (prepare-form value-form new-context)
-                                    do (context-add-env-lexical! context var)))
-                     (body*
-                       (prepare-progn body new-context)))
-                (if envp
-                    (lambda (env)
-                      (let ((new-env (make-environment env n)))
-                        (loop for i from 0 below n
-                              for val* in values*
-                              do (setf (environment-value new-env 0 i)
-                                       (funcall (the eval-closure val*) new-env)))
-                        (funcall body* new-env)))
-                    (lambda (env)
-                      (with-dynamic-extent-environment (new-env env n)
-                        (loop for i from 0 below n
-                              for val* in values*
-                              do (setf (environment-value new-env 0 i)
-                                       (funcall (the eval-closure val*) new-env)))
-                        (funcall body* new-env)))))))
+                                    for val* = (prepare-form value-form new-context)
+                                    if (globally-special-p var)
+                                      collect (cons var val*) into specials 
+                                    else
+                                      collect val* into lexicals
+                                      and do (context-add-env-lexical! context var)))
+                     
+                     lexical-values*
+                     special-bindings*)
+                (loop for (var . value-form) in real-bindings
+                      for val* = (prepare-form value-form new-context)
+                      if (globally-special-p var)
+                      collect (cons var val*) into specials 
+                      else
+                      collect val* into lexicals
+                      and do (context-add-env-lexical! new-context var)
+                      finally
+                         (setq lexical-values* lexicals
+                               special-bindings* specials))
+                (let ((body* (prepare-progn body new-context))
+                      (special-vars  (mapcar #'car special-bindings*))
+                      (special-vals* (mapcar #'cdr special-bindings*)))
+                  (if envp
+                      (lambda (env)
+                        (let ((new-env (make-environment env n)))
+                          (loop for i from 0 below n
+                                for val* in values*
+                                do (setf (environment-value new-env 0 i)
+                                         (funcall (the eval-closure val*) new-env)))
+                          (progv
+                              special-vars
+                              (loop for val* in special-vals*
+                                    collect (funcall (the eval-closure val*) env))
+                            (funcall body* new-env))))
+                      (lambda (env)
+                        (with-dynamic-extent-environment (new-env env n)
+                          (loop for i from 0 below n
+                                for val* in values*
+                                do (setf (environment-value new-env 0 i)
+                                         (funcall (the eval-closure val*) new-env)))
+                          (progv
+                              special-vars
+                              (loop for val* in special-vals*
+                                    collect (funcall (the eval-closure val*) env))
+                            (funcall body* new-env)))))))))
            ((load-time-value)
             (let ((load-form (cadr form)))
               ;; FIXME
