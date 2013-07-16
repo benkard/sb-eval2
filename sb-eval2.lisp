@@ -378,9 +378,10 @@
              (default-values*
                (loop for default-value in default-values
                      for binding in (append optional keys aux)
-                     for var = (lambda-binding-main-var binding)
+                     for vars = (lambda-binding-vars binding)
                      collect (prepare-form default-value new-context)
-                     do (context-add-env-lexical! context var)))
+                     do (dolist (var vars)
+                          (context-add-env-lexical! new-context var))))
              (body* (prepare-progn body new-context))
              (unbound (gensym)))
         (macrolet ((handle-arguments (args env)
