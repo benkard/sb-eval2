@@ -353,7 +353,7 @@
                           morep more-context more-count)
         (sb-int:parse-lambda-list lambda-list)
       (declare (ignore more-context more-count))
-      (declare (ignorable allowp auxp))
+      (declare (ignorable auxp))
       (when morep
         (error "The interpreter does not support the lambda-list keyword ~D"
                'sb-int:&more))
@@ -363,7 +363,6 @@
                               (mapcan #'lambda-simple-binding-vars aux)
                               (and restp (list rest))))
              (keywords (mapcar #'lambda-key keys))
-             #+(or) (simplep (not (or optional restp keyp allowp auxp)))
              (required-num (length required))
              (optional-num (length optional))
              (key-num (length keys))
@@ -388,12 +387,17 @@
                      ;; All this ELT and LENGTH stuff is not as
                      ;; inefficient as it looks.  SBCL transforms
                      ;; &rest into &more here.
-                     `(let ((rest
-                              (when (or restp keyp)
-                                (loop for i
-                                      from (+ required-num optional-num)
-                                      below (length ,args)
-                                      collect (elt ,args i)))))
+                     `(let* ((restnum 0)
+                             (rest
+                               (when (or restp keyp)
+                                 (loop for i
+                                       from (+ required-num optional-num)
+                                       below (length ,args)
+                                       collect (elt ,args i)
+                                       do (incf restnum))))
+                             (my-default-values* default-values*)
+                             (my-keywords keywords))
+                        (declare (fixnum restnum))
                         (prog ((argi 0)
                                (vari 0))
                            (declare (type fixnum argi vari))
@@ -404,7 +408,7 @@
                              (go keys))
                            (setf (environment-value ,env 0 vari) (elt ,args argi))
                            (when (>= argi required-num)
-                             (pop default-values*)
+                             (pop my-default-values*)
                              (incf vari)
                              (setf (environment-value ,env 0 vari) t))
                            (incf vari)
@@ -414,7 +418,7 @@
                            (assert (>= argi required-num))
                            (when (>= vari (the fixnum (+ required-num (the fixnum (* 2 optional-num)))))
                              (go keys))
-                           (let ((val* (pop default-values*)))
+                           (let ((val* (pop my-default-values*)))
                              (setf (environment-value ,env 0 vari)
                                    (funcall (the eval-closure val*) ,env)
                                    (environment-value ,env 0 (1+ vari))
@@ -422,12 +426,25 @@
                            (incf vari 2)
                            (go missing-optionals)
                          keys
+                           (unless keyp
+                             (assert (or restp (= argi (length args))))
+                             (go aux))
+                           (assert (evenp restnum))
                            (when (>= vari
                                      (the fixnum
                                           (+ required-num (* 2 (+ optional-num key-num)))))
+                             ;; fixme: check &allow-other-keys and :allow-other-keys
+                             (unless (or allowp
+                                         (getf rest :allow-other-keys nil))
+                               (loop for (k v) on rest
+                                     unless (member k
+                                                    (cons :allow-other-keys keywords)
+                                                    :test #'eq)
+                                     do (error 'sb-int:simple-program-error
+                                               "unknown &KEY argument: ~A" k)))
                              (go aux))
-                           (let* ((key  (the keyword (pop keywords)))
-                                  (val* (pop default-values*))
+                           (let* ((key  (the keyword (pop my-keywords)))
+                                  (val* (pop my-default-values*))
                                   (x    (getf rest key unbound)))
                              (if (eq unbound x)
                                  (setf (environment-value ,env 0 vari)
