@@ -292,7 +292,8 @@
         (lambda (env)
           (apply (or (sb-c::fdefn-fun f*)
                      (error 'undefined-function :name f))
-                 (mapcar (lambda (x) (funcall (the eval-closure x) env)) args*))))))
+                 (mapcar (lambda (x) (funcall (the eval-closure x) env))
+                         args*))))))
 
 (declaim (ftype (function (eval-closure list context) eval-closure) prepare-direct-call))
 (defun prepare-direct-call (f args context)
@@ -345,7 +346,7 @@
                 (symbol (keywordify (first entry)))))
       (symbol (keywordify entry)))))
 
-(declaim (ftype (function (list context) eval-closure) prepare-lambda))
+(declaim (ftype (function * eval-closure) prepare-lambda))
 (defun prepare-lambda (lambda-form context)
   (destructuring-bind (lambda-list &rest body) lambda-form
     ;; FIXME: SPECIAL declarations!
@@ -438,12 +439,13 @@
                              ;; fixme: check &allow-other-keys and :allow-other-keys
                              (unless (or allowp
                                          (getf rest :allow-other-keys nil))
-                               (loop for (k v) on rest
+                               (loop for (k v) on rest by #'cddr
                                      unless (member k
                                                     (cons :allow-other-keys keywords)
                                                     :test #'eq)
                                      do (error 'sb-int:simple-program-error
-                                               "unknown &KEY argument: ~A" k)))
+                                               :format-control "unknown &KEY argument: ~A"
+                                               :format-arguments (list k))))
                              (go aux))
                            (let* ((key  (the keyword (pop my-keywords)))
                                   (val* (pop my-default-values*))
@@ -466,13 +468,13 @@
                                              (the fixnum (* 2 (+ optional-num key-num)))
                                              aux-num)))
                              (go rest))
-                           (let ((val* (pop default-values*)))
+                           (let ((val* (pop my-default-values*)))
                              (setf (environment-value ,env 0 vari)
                                    (funcall (the eval-closure val*) ,env)))
                            (incf vari)
                            (go aux)
                          rest
-                           (assert (null default-values*))
+                           (assert (null my-default-values*))
                            (when restp
                              (setf (environment-value ,env 0 (1- varnum))
                                    rest))))))
@@ -740,7 +742,11 @@
               (let ((f* (prepare-form f context))
                     (argforms* (mapcar (lambda (x) (prepare-form x context)) argforms)))
                 (lambda (env)
-                  (apply f* (mapcan (lambda (arg) (multiple-value-list (funcall (the eval-closure arg) env))) argforms*))))))
+                  (apply (funcall (the eval-closure f*) env)
+                         (mapcan (lambda (arg)
+                                   (multiple-value-list
+                                    (funcall (the eval-closure arg) env)))
+                                 argforms*))))))
            ((multiple-value-prog1)
             (destructuring-bind (values-form &body body) (rest form)
               (let ((values-form* (prepare-form values-form context))
