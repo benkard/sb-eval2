@@ -380,7 +380,9 @@
                      for vars = (lambda-binding-vars binding)
                      collect (prepare-form default-value new-context)
                      do (dolist (var vars)
-                          (context-add-env-lexical! new-context var))))
+                          (context-add-env-lexical! new-context var))
+                     finally (when restp
+                               (context-add-env-lexical! new-context rest))))
              (body* (prepare-progn body new-context))
              (unbound (gensym)))
         (macrolet ((handle-arguments (args env)
