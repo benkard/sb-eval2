@@ -233,9 +233,11 @@
              (offset  (lexical-offset lexical)))
         (lambda (env)
           (environment-value env nesting offset)))
-      (lambda (env)
-        (declare (ignore env))
-        (fdefinition function-name))))
+      (let ((f* (sb-c::fdefinition-object function-name t)))
+        (lambda (env)
+          (declare (ignore env))
+          (or (sb-c::fdefn-fun f*)
+              (error 'undefined-function :name function-name))))))
 
 
 
