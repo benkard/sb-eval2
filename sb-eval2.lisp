@@ -348,7 +348,7 @@
                 (symbol (keywordify (first entry)))))
       (symbol (keywordify entry)))))
 
-(declaim (ftype (function * eval-closure) prepare-lambda))
+(declaim (ftype (function * eval-closure) prepare-macro-lambda))
 (defun prepare-macro-lambda (name lambda-form context)
   (destructuring-bind (lambda-list &rest body)
       lambda-form
