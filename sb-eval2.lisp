@@ -39,7 +39,7 @@
     `(let* ((,size% ,size)
             (,data% (make-array (list ,size%)))
             (,var (%make-environment :parent ,parent :data ,data%)))
-       (declare (type (mod #.+stack-max+) ,size%)
+       (declare (type (mod #.(1+ +stack-max+)) ,size%)
                 (dynamic-extent ,var)
                 (dynamic-extent ,data%))
        ,@body)))
