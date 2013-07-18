@@ -385,7 +385,7 @@
         (declare (ignore more-context more-count))
         (declare (ignorable auxp))
         (when morep
-          (error "The interpreter does not support the lambda-list keyword ~D"
+          (error "The interpreter does not support the lambda-list keyword ~S"
                  'sb-int:&more))
         (let* ((argvars (append required
                                 (mapcan #'lambda-binding-vars optional)
