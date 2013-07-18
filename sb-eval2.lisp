@@ -772,7 +772,8 @@
               ;; FIXME
               (prepare-form load-form)))
            ((locally)
-            (prepare-nil))
+            (destructuring-bind (&rest body) (rest form)
+              (prepare-progn body context)))
            ((multiple-value-call)
             (destructuring-bind (f &rest argforms) (rest form)
               (let ((f* (prepare-form f context))
