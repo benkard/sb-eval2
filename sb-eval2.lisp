@@ -688,10 +688,13 @@
                                                       (prepare-lambda (rest form) context))
                                                 (cons form (prepare-nil))))
                                           bindings))
-                       (new-context (context-add-env-functions context (mapcar #'first bindings*)))
+                       (new-context
+                         (context-add-env-functions context (mapcar #'first bindings*)))
                        (functions (mapcar #'cdr bindings*))
                        (n (length functions))
-                       (body* (prepare-progn body new-context)))
+                       (body* (prepare-progn body
+                                             (context-add-specials new-context
+                                                                   specials))))
                   (lambda (env)
                     (let ((new-env (make-environment env n)))
                       (loop for i from 0 to n
@@ -711,7 +714,8 @@
                                           bindings))
                        (functions (mapcar #'cdr bindings*))
                        (n (length functions))
-                       (body* (prepare-progn body new-context)))
+                       (body* (prepare-progn body (context-add-specials new-context
+                                                                        specials))))
                   (lambda (env)
                     (let ((new-env (make-environment env n)))
                       (loop for i from 0 to n
@@ -940,7 +944,10 @@
                 (let ((bindings (mapcar (lambda (form)
                                           (cons (first form) (second form)))
                                         bindings)))
-                  (prepare-progn body (context-add-symbol-macros context bindings))))))
+                  (prepare-progn body
+                                 (context-add-specials
+                                  (context-add-symbol-macros context bindings)
+                                  specials))))))
            ((macrolet)
             ;; FIXME: This doesn't actually work because we disregard
             ;; the lambda list when calling the macro.
@@ -954,7 +961,10 @@
                                                                        context)
                                                  (make-null-environment))))
                                         bindings)))
-                  (prepare-progn body (context-add-macros context bindings))))))
+                  (prepare-progn body
+                                 (context-add-specials
+                                  (context-add-macros context bindings)
+                                  specials))))))
            ((go)
             (let* ((go-tag    (second form))
                    (catch-tag (context-find-go-tag context go-tag)))
