@@ -551,7 +551,7 @@
         (symbol
          (let ((macro? (context-find-symbol-macro context form)))
                 (if macro?
-                    (funcall (the function (cdr macro?)))
+                    (prepare-form macro?)
                     (prepare-ref form context))))
         (cons
          (case (first form)
