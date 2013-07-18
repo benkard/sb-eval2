@@ -347,6 +347,22 @@
       (symbol (keywordify entry)))))
 
 (declaim (ftype (function * eval-closure) prepare-lambda))
+(defun prepare-macro-lambda (name lambda-form context)
+  (destructuring-bind (lambda-list &rest body)
+      lambda-form
+    (let* ((whole (gensym "WHOLE"))
+           (env   (gensym "ENV"))
+           (body-form (sb-kernel:parse-defmacro lambda-list
+                                                whole
+                                                body
+                                                name
+                                                'macrolet
+                                                :environment env)))
+      (prepare-form `(lambda (,whole ,env)
+                       ,body-form)
+                    context))))
+
+(declaim (ftype (function * eval-closure) prepare-lambda))
 (defun prepare-lambda (lambda-form context)
   (destructuring-bind (lambda-list &rest body) lambda-form
     ;; FIXME: SPECIAL declarations!
@@ -840,7 +856,9 @@
               (let ((bindings (mapcar (lambda (form)
                                         (cons (first form)
                                               (funcall
-                                               (prepare-lambda (rest form) context)
+                                               (prepare-macro-lambda (first form)
+                                                                     (rest form)
+                                                                     context)
                                                (make-null-environment))))
                                       bindings)))
                 (prepare-progn body (context-add-macros context bindings)))))
@@ -883,7 +901,7 @@
                     (global-macro? (macro-function f)))
                 (cond
                   (local-macro?
-                   (let ((macro-function (cdr local-macro?)))
+                   (let ((macro-function local-macro?))
                      (prepare-form (funcall (the function macro-function)
                                             form
                                             (context->native-environment context))
