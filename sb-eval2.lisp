@@ -307,10 +307,14 @@
 (declaim (ftype (function (list context) eval-closure) prepare-progn))
 (defun prepare-progn (forms context)
   (let ((body* (mapcar (lambda (form) (prepare-form form context)) forms)))
-    (lambda (env)
-      (let (result)
-        (dolist (form* body* result)
-          (setq result (funcall (the eval-closure form*) env)))))))
+    (if (null body*)
+        (prepare-nil)
+        (let ((forms* (butlast body*))
+              (last-form* (first (last body*))))
+          (lambda (env)
+            (dolist (form* forms*)
+              (funcall (funcall (the eval-closure form*) env)))
+            (funcall (the eval-closure last-form*) env))))))
 
 (defun lambda-binding-vars (entry)
   (etypecase entry
