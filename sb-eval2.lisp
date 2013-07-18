@@ -444,7 +444,7 @@
                (aux-num (length aux))
                (varnum (length argvars))
                (envp (or (> varnum +stack-max+)
-                         (maybe-closes-over-p `(progn ,@body) argvars)))
+                         (maybe-closes-over-p context `(progn ,@body) argvars)))
                (default-values (append (mapcar #'lambda-binding-default optional)
                                        (mapcar #'lambda-binding-default keys)
                                        (mapcar #'lambda-binding-default aux)))
@@ -729,7 +729,7 @@
                        (vars (mapcar #'car real-bindings))
                        (varnum (length vars))
                        (envp (or (> varnum +stack-max+)
-                                 (maybe-closes-over-p `(progn ,@body) vars)))
+                                 (maybe-closes-over-p context `(progn ,@body) vars)))
                        (new-context
                          (context-add-env-lexicals context (list)))
                        srav-laiceps)
@@ -790,7 +790,7 @@
                        (vars (mapcar #'car real-bindings))
                        (varnum (length vars))
                        (envp (or (> varnum +stack-max+)
-                                 (maybe-closes-over-p `(progn ,@body) vars)))
+                                 (maybe-closes-over-p context `(progn ,@body) vars)))
                        (new-context
                          (context-add-env-lexicals context (list)))
                        lexical-values*
