@@ -120,7 +120,8 @@
   (go-tags nil :type list)
   (symbol-macros nil :type list)
   (macros nil :type list)
-  (lexicals nil :type list))
+  (lexicals nil :type list)
+  (specials nil :type list))
 (defun make-null-context ()
   (make-context nil))
 (defun context-add-block-tag (context block tag)
@@ -182,10 +183,13 @@
                                           collect current-form)))
                  (cons tag current-forms))))))
 (defun context-var-lexical-p (context var)
-  (context-find-lexical context var))
+  (and (not (find var (context-specials context) :test #'equal))
+       (or (find var (context-lexicals context) :key #'lexical-name :test #'equal)
+           (and (context-parent context)
+                (context-var-lexical-p (context-parent context) var)))))
 (defun context-add-env-lexicals (context vars)
   ;; open a new variable context
-    (let ((new-context (make-context context)))
+  (let ((new-context (make-context context)))
     (with-slots (lexicals env-hop)
         new-context
       (setq env-hop t)
@@ -194,10 +198,18 @@
                            collect (make-env-lexical v i))))
     new-context))
 (defun context-add-env-lexical! (context var)
-  ;; open a new variable context
   (with-slots (lexicals)
       context
     (push (make-env-lexical var (length lexicals)) lexicals))
+  (values))
+(defun context-add-specials (context vars)
+  (let ((new-context (make-context context)))
+    (setf (context-specials new-context) vars)
+    new-context))
+(defun context-add-special! (context var)
+  (with-slots (specials)
+      context
+    (push var specials))
   (values))
 (defun context-add-env-functions (context fs)
   (context-add-env-lexicals context (mapcar (lambda (x) `(function ,x)) fs)))
@@ -278,7 +290,6 @@
           (declare (ignore env))
           (or (sb-c::fdefn-fun f*)
               (error 'undefined-function :name function-name))))))
-
 
 
 (declaim (ftype (function (context (or symbol list)) *) context-find-function))
@@ -725,10 +736,11 @@
                   (let* ((values*
                            (loop for (var . value-form) in real-bindings
                                  for val* = (prepare-form value-form context)
-                                 if (or (member var specials)
+                                 if (or (member (the symbol var) specials)
                                         (globally-special-p var))
                                  collect (cons t   val*)
                                  and do (push var srav-laiceps)
+                                        (context-add-special! new-context var)
                                  else
                                  collect (cons nil val*)
                                  and do (context-add-env-lexical! new-context var)))
@@ -826,7 +838,8 @@
            ((locally)
             (destructuring-bind (&rest exprs) (rest form)
               (with-parsed-body (body specials) exprs
-               (prepare-progn body context))))
+                (let ((new-context (context-add-specials context specials)))
+                  (prepare-progn body new-context)))))
            ((multiple-value-call)
             (destructuring-bind (f &rest argforms) (rest form)
               (let ((f* (prepare-form f context))
