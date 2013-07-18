@@ -58,22 +58,28 @@
 (defmethod lexical-with-nesting ((lexical env-lexical) nesting)
   (make-env-lexical (lexical-name lexical) (lexical-offset lexical) nesting))
 
-(defun maybe-references-p (form vars)
+(defun maybe-references-p/env (form vars env)
   ;; Use `(function ,name) for local functions.
   ;;
   ;; FIXME: This doesn't do macro expansion, so it's probably
   ;; incorrect.
-  (typecase form
-    (symbol
-     (member form vars :test #'equal))
-    (cons
-     (destructuring-bind (a . b) form
-       (or (maybe-references-p a vars)
-           (maybe-references-p b vars))))
-    (t
-     nil)))
+  (let ((sb-walker::*walk-form-expand-macros-p* t))
+    (sb-walker:walk-form
+     form
+     env
+     (lambda (x ctx env)
+       (declare (ignore ctx))
+       (when (and (member x vars :test #'equal)
+                  (not (sb-walker:var-special-p x env))
+                  (not (sb-walker:var-lexical-p x env)))
+         (return-from maybe-references-p/env t))
+       x)))
+  nil)
 
-(defun maybe-closes-over-p (form vars)
+(defun maybe-closes-over-p (context form vars)
+  (maybe-closes-over-p/env form vars (context->native-environment context)))
+
+(defun maybe-closes-over-p/env (form vars env)
   ;; Use `(function ,name) for local functions.
   ;;
   ;; NOTE: This is a *very* simplistic algorithm with a *lot* of false
@@ -81,24 +87,31 @@
   ;;
   ;; FIXME: This doesn't do macro expansion, so it's probably
   ;; incorrect.
-  (typecase form
-    (symbol
-     nil)
-    (cons
-     (destructuring-bind (a . b) form
-       (case a
-         ((lambda)
-          (maybe-references-p form vars))
-         ((flet labels)
-          (typecase b
-            (cons
-             (destructuring-bind (bindings . rest) form
-               (or (maybe-references-p bindings vars)
-                   (maybe-closes-over-p rest vars))))
-            (t
-             (maybe-closes-over-p b vars)))))))
-    (t
-     nil)))
+  (let ((sb-walker::*walk-form-expand-macros-p* t))
+    (sb-walker:walk-form
+     form
+     env
+     (lambda (x ctx env)
+       (declare (ignore ctx))
+       (typecase x
+         (cons
+          (destructuring-bind (a . b) x
+            (case a
+              ((lambda)
+               (when (maybe-references-p/env form vars env)
+                 (return-from maybe-closes-over-p/env t)))
+              ((flet labels)
+               (typecase b
+                 (cons
+                  (destructuring-bind (bindings . rest) form
+                    (when (or (maybe-references-p/env bindings vars env)
+                              (maybe-closes-over-p/env rest vars env))
+                      (return-from maybe-closes-over-p/env t))))
+                 (t
+                  (when (maybe-closes-over-p/env b vars env)
+                    (return-from maybe-closes-over-p/env t)))))))))
+       x)))
+  nil)
 
 (defstruct (context (:constructor make-context (&optional parent)))
   parent
