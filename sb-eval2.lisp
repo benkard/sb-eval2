@@ -706,44 +706,51 @@
                                  (maybe-closes-over-p `(progn ,@body) vars)))
                        (new-context
                          (context-add-env-lexicals context (list)))
-                       lexical-values*
-                       special-bindings*)
-                  (loop for (var . value-form) in real-bindings
-                        for val* = (prepare-form value-form context)
-                        if (globally-special-p var)
-                        collect (cons var val*) into specials 
-                        else
-                        collect val* into lexicals
-                        and do (context-add-env-lexical! new-context var)
-                        finally
-                           (setq lexical-values* lexicals
-                                 special-bindings* specials))
-                  (let ((body* (prepare-progn body new-context))
-                        (special-vars  (mapcar #'car special-bindings*))
-                        (special-vals* (mapcar #'cdr special-bindings*)))
+                       srav-laiceps)
+                  (let* ((values*
+                           (loop for (var . value-form) in real-bindings
+                                 for val* = (prepare-form value-form context)
+                                 if (or (member var specials)
+                                        (globally-special-p var))
+                                 collect (cons t   val*)
+                                 and do (push var srav-laiceps)
+                                 else
+                                 collect (cons nil val*)
+                                 and do (context-add-env-lexical! new-context var)))
+                         (body* (prepare-progn body new-context)))
                     (if envp
                         (lambda (env)
-                          (let ((new-env (make-environment env varnum)))
-                            (loop for i from 0 below varnum
-                                  for val* in lexical-values*
+                          (let ((new-env (make-environment env varnum))
+                                (slav-laiceps (list)))
+                            (loop with i fixnum = 0
+                                  for (specialp . val*) in values*
+                                  when specialp
+                                  do (push (funcall (the eval-closure val*) env)
+                                           slav-laiceps)
+                                  else
                                   do (setf (environment-value new-env 0 i)
-                                           (funcall (the eval-closure val*) env)))
+                                           (funcall (the eval-closure val*) env))
+                                     (incf i))
                             (progv
-                                special-vars
-                                (loop for val* in special-vals*
-                                      collect (funcall (the eval-closure val*) env))
+                                srav-laiceps
+                                slav-laiceps
                               (funcall body* new-env))))
                         (lambda (env)
                           (with-dynamic-extent-environment (new-env env varnum)
-                            (loop for i from 0 below varnum
-                                  for val* in lexical-values*
-                                  do (setf (environment-value new-env 0 i)
-                                           (funcall (the eval-closure val*) env)))
-                            (progv
-                                special-vars
-                                (loop for val* in special-vals*
-                                      collect (funcall (the eval-closure val*) env))
-                              (funcall body* new-env))))))))))
+                            (let ((slav-laiceps (list)))
+                              (loop with i fixnum = 0
+                                    for (specialp . val*) in values*
+                                    when specialp
+                                    do (push (funcall (the eval-closure val*) env)
+                                             slav-laiceps)
+                                    else
+                                    do (setf (environment-value new-env 0 i)
+                                             (funcall (the eval-closure val*) env))
+                                       (incf i))
+                             (progv
+                                 srav-laiceps
+                                 slav-laiceps
+                               (funcall body* new-env)))))))))))
            ((let*)
             ;; FIXME: SPECIAL declarations!
             (destructuring-bind (bindings &rest exprs) (rest form)
