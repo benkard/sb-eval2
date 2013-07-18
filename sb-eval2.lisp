@@ -513,6 +513,11 @@
   (declare (ignore context))
   (sb-c::internal-make-lexenv nil nil nil nil nil nil nil nil nil nil nil))
 
+(defun native-environment->context (lexenv)
+  ;;FIXME
+  (declare (ignore lexenv))
+  (make-null-context))
+
 (defun globally-special-p (var)
   (eq :special (sb-int:info :variable :kind var)))
 
