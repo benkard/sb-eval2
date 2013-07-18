@@ -8,7 +8,7 @@
 ;;(declaim (optimize (debug 3) (space 0) (speed 0) (safety 3) (compilation-speed 0)))
 (declaim (optimize (debug 0) (space 0) (speed 3) (safety 0) (compilation-speed 0)))
 
-(defconstant +stack-max+ 1000)
+(defconstant +stack-max+ 8)
 
 (defmacro specialize (&environment env var value possible-values &body body)
   `(ecase ,value
@@ -669,12 +669,11 @@
                                special-bindings* specials))
                 (let ((body* (prepare-progn body new-context))
                       (special-vars  (mapcar #'car special-bindings*))
-                      (special-vals* (mapcar #'cdr special-bindings*))
-                      (n (length (the list lexical-values*))))
+                      (special-vals* (mapcar #'cdr special-bindings*)))
                   (if envp
                       (lambda (env)
-                        (let ((new-env (make-environment env n)))
-                          (loop for i from 0 below n
+                        (let ((new-env (make-environment env varnum)))
+                          (loop for i from 0 below varnum
                                 for val* in lexical-values*
                                 do (setf (environment-value new-env 0 i)
                                          (funcall (the eval-closure val*) env)))
@@ -682,10 +681,10 @@
                               special-vars
                               (loop for val* in special-vals*
                                     collect (funcall (the eval-closure val*) env))
-                           (funcall body* new-env))))
+                            (funcall body* new-env))))
                       (lambda (env)
-                        (with-dynamic-extent-environment (new-env env n)
-                          (loop for i from 0 below n
+                        (with-dynamic-extent-environment (new-env env varnum)
+                          (loop for i from 0 below varnum
                                 for val* in lexical-values*
                                 do (setf (environment-value new-env 0 i)
                                          (funcall (the eval-closure val*) env)))
@@ -722,12 +721,11 @@
                                special-bindings* specials))
                 (let ((body* (prepare-progn body new-context))
                       (special-vars  (mapcar #'car special-bindings*))
-                      (special-vals* (mapcar #'cdr special-bindings*))
-                      (n (length (the list lexical-values*))))
+                      (special-vals* (mapcar #'cdr special-bindings*)))
                   (if envp
                       (lambda (env)
-                        (let ((new-env (make-environment env n)))
-                          (loop for i from 0 below n
+                        (let ((new-env (make-environment env varnum)))
+                          (loop for i from 0 below varnum
                                 for val* in lexical-values*
                                 do (setf (environment-value new-env 0 i)
                                          (funcall (the eval-closure val*) new-env)))
@@ -737,8 +735,8 @@
                                     collect (funcall (the eval-closure val*) new-env))
                             (funcall body* new-env))))
                       (lambda (env)
-                        (with-dynamic-extent-environment (new-env env n)
-                          (loop for i from 0 below n
+                        (with-dynamic-extent-environment (new-env env varnum)
+                          (loop for i from 0 below varnum
                                 for val* in lexical-values*
                                 do (setf (environment-value new-env 0 i)
                                          (funcall (the eval-closure val*) new-env)))
