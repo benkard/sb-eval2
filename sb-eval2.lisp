@@ -231,6 +231,27 @@
         (declare (ignore env))
         (symbol-value var))))
 
+
+(defun body-decls&forms (exprs)
+  (let* ((decl-exprs
+           (loop while (and (consp (first exprs))
+                            (eq 'declare (first (first exprs))))
+                 for expr = (pop exprs)
+                 collect expr))
+         (decls (mapcan #'rest decl-exprs)))
+    (values decls exprs)))
+
+(defun decl-specials (declaration)
+  (when (eq (first declaration) 'special)
+    (rest declaration)))
+
+(defmacro with-parsed-body ((forms-var specials-var) exprs &body body)
+  (let ((decls (gensym)))
+    `(multiple-value-bind (,decls ,forms-var) (body-decls&forms ,exprs)
+       (let ((,specials-var (mapcan #'decl-specials ,decls)))
+         ,@body))))
+
+
 (declaim (ftype (function ((or symbol list) context) eval-closure) prepare-function-ref))
 (defun prepare-function-ref (function-name context)
   (if (context-var-lexical-p context `(function ,function-name))
@@ -541,25 +562,6 @@
   ;;FIXME
   (declare (ignore lexenv))
   (make-null-context))
-
-(defun body-decls&forms (exprs)
-  (let* ((decl-exprs
-           (loop while (and (consp (first exprs))
-                            (eq 'declare (first (first exprs))))
-                 for expr = (pop exprs)
-                 collect expr))
-         (decls (mapcan #'rest decl-exprs)))
-    (values decls exprs)))
-
-(defun decl-specials (declaration)
-  (when (eq (first declaration) 'special)
-    (rest declaration)))
-
-(defmacro with-parsed-body ((forms-var specials-var) exprs &body body)
-  (let ((decls (gensym)))
-    `(multiple-value-bind (,decls ,forms-var) (body-decls&forms ,exprs)
-       (let ((,specials-var (mapcan #'decl-specials ,decls)))
-         ,@body))))
 
 (defun globally-special-p (var)
   (eq :special (sb-int:info :variable :kind var)))
