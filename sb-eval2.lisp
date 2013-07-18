@@ -443,11 +443,13 @@
                (key-num (length keys))
                (aux-num (length aux))
                (varnum (length argvars))
-               (envp (or (> varnum +stack-max+)
-                         (maybe-closes-over-p context `(progn ,@body) argvars)))
                (default-values (append (mapcar #'lambda-binding-default optional)
                                        (mapcar #'lambda-binding-default keys)
                                        (mapcar #'lambda-binding-default aux)))
+               (envp (or (> varnum +stack-max+)
+                         (maybe-closes-over-p context `(progn ,@body) argvars)
+                         (some (lambda (x) (maybe-closes-over-p context x argvars))
+                               default-values)))
                (new-context (context-add-env-lexicals context required))
                (default-values*
                  (loop for default-value in default-values
@@ -789,7 +791,9 @@
                        (vars (mapcar #'car real-bindings))
                        (varnum (length vars))
                        (envp (or (> varnum +stack-max+)
-                                 (maybe-closes-over-p context `(progn ,@body) vars)))
+                                 (maybe-closes-over-p context `(progn ,@body) vars)
+                                 (some (lambda (x) (maybe-closes-over-p context x vars))
+                                       (mapcar #'cdr real-bindings))))
                        (new-context
                          (context-add-env-lexicals context (list)))
                        lexical-values*
