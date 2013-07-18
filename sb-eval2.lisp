@@ -10,11 +10,11 @@
 
 (defconstant +stack-max+ 8)
 
-(defmacro specialize (&environment env var value possible-values &body body)
+(defmacro specialize (var value possible-values &body body)
   `(ecase ,value
-     ,@(loop for x in (sb-int:eval-in-lexenv possible-values env)
+     ,@(loop for x in (cl:eval possible-values)
              collect
-                `((,x) ,(sb-int:eval-in-lexenv `(let ((,var ,x)) ,@body) env)))))
+                `((,x) ,(cl:eval `(let ((,var ,x)) ,@body))))))
 
 (declaim (inline %make-environment))
 (defstruct (environment (:constructor %make-environment))
