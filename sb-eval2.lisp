@@ -925,7 +925,7 @@
             (destructuring-bind (f . args) form
               (check-type f (or list symbol))
               (let ((local-macro? (context-find-macro context f))
-                    (global-macro? (macro-function f)))
+                    (global-macro? (and (symbolp f) (macro-function f))))
                 (cond
                   (local-macro?
                    (let ((macro-function local-macro?))
@@ -936,9 +936,8 @@
                   (global-macro?
                    (prepare-form (funcall global-macro? form (context->native-environment context)) context))
                   ((and (listp f)
-                        (listp (first f))
-                        (eq 'lambda (first (first f))))
-                   (let ((lambda-fn (prepare-lambda (rest (first f)) context)))
+                        (eq 'lambda (first f)))
+                   (let ((lambda-fn (prepare-lambda (rest f) context)))
                      (prepare-direct-call lambda-fn args context)))
                   (t
                    (if (local-function-p context f)
