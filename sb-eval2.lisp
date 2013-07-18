@@ -376,155 +376,156 @@
 
 (declaim (ftype (function * eval-closure) prepare-lambda))
 (defun prepare-lambda (lambda-form context)
-  (destructuring-bind (lambda-list &rest body) lambda-form
-    ;; FIXME: SPECIAL declarations!
-    (multiple-value-bind (required optional restp rest keyp keys allowp auxp aux
-                          morep more-context more-count)
-        (sb-int:parse-lambda-list lambda-list)
-      (declare (ignore more-context more-count))
-      (declare (ignorable auxp))
-      (when morep
-        (error "The interpreter does not support the lambda-list keyword ~D"
-               'sb-int:&more))
-      (let* ((argvars (append required
-                              (mapcan #'lambda-binding-vars optional)
-                              (mapcan #'lambda-binding-vars keys)
-                              (mapcan #'lambda-simple-binding-vars aux)
-                              (and restp (list rest))))
-             (keywords (mapcar #'lambda-key keys))
-             (required-num (length required))
-             (optional-num (length optional))
-             (key-num (length keys))
-             (aux-num (length aux))
-             (varnum (length argvars))
-             (envp (or (> varnum +stack-max+)
-                       (maybe-closes-over-p `(progn ,@body) argvars)))
-             (default-values (append (mapcar #'lambda-binding-default optional)
-                                     (mapcar #'lambda-binding-default keys)
-                                     (mapcar #'lambda-binding-default aux)))
-             (new-context (context-add-env-lexicals context required))
-             (default-values*
-               (loop for default-value in default-values
-                     for binding in (append optional keys aux)
-                     for vars = (lambda-binding-vars binding)
-                     collect (prepare-form default-value new-context)
-                     do (dolist (var vars)
-                          (context-add-env-lexical! new-context var))
-                     finally (when restp
-                               (context-add-env-lexical! new-context rest))))
-             (body* (prepare-progn body new-context))
-             (unbound (gensym)))
-        (macrolet ((handle-arguments (args env)
-                     ;; All this ELT and LENGTH stuff is not as
-                     ;; inefficient as it looks.  SBCL transforms
-                     ;; &rest into &more here.
-                     `(let* ((restnum 0)
-                             (rest
-                               (when (or restp keyp)
-                                 (loop for i
-                                       from (+ required-num optional-num)
-                                       below (length ,args)
-                                       collect (elt ,args i)
-                                       do (incf restnum))))
-                             (my-default-values* default-values*)
-                             (my-keywords keywords))
-                        (declare (fixnum restnum))
-                        (prog ((argi 0)
-                               (vari 0))
-                           (declare (type fixnum argi vari))
-                         positional
-                           (when (>= argi (length ,args))
-                             (go missing-optionals))
-                           (when (>= argi (the fixnum (+ required-num optional-num)))
-                             (go keys))
-                           (setf (environment-value ,env 0 vari) (elt ,args argi))
-                           (when (>= argi required-num)
-                             (pop my-default-values*)
+  (destructuring-bind (lambda-list &rest exprs) lambda-form
+    (with-parsed-body (body specials) exprs
+      ;; FIXME: SPECIAL declarations!
+      (multiple-value-bind (required optional restp rest keyp keys allowp auxp aux
+                            morep more-context more-count)
+          (sb-int:parse-lambda-list lambda-list)
+        (declare (ignore more-context more-count))
+        (declare (ignorable auxp))
+        (when morep
+          (error "The interpreter does not support the lambda-list keyword ~D"
+                 'sb-int:&more))
+        (let* ((argvars (append required
+                                (mapcan #'lambda-binding-vars optional)
+                                (mapcan #'lambda-binding-vars keys)
+                                (mapcan #'lambda-simple-binding-vars aux)
+                                (and restp (list rest))))
+               (keywords (mapcar #'lambda-key keys))
+               (required-num (length required))
+               (optional-num (length optional))
+               (key-num (length keys))
+               (aux-num (length aux))
+               (varnum (length argvars))
+               (envp (or (> varnum +stack-max+)
+                         (maybe-closes-over-p `(progn ,@body) argvars)))
+               (default-values (append (mapcar #'lambda-binding-default optional)
+                                       (mapcar #'lambda-binding-default keys)
+                                       (mapcar #'lambda-binding-default aux)))
+               (new-context (context-add-env-lexicals context required))
+               (default-values*
+                 (loop for default-value in default-values
+                       for binding in (append optional keys aux)
+                       for vars = (lambda-binding-vars binding)
+                       collect (prepare-form default-value new-context)
+                       do (dolist (var vars)
+                            (context-add-env-lexical! new-context var))
+                       finally (when restp
+                                 (context-add-env-lexical! new-context rest))))
+               (body* (prepare-progn body new-context))
+               (unbound (gensym)))
+          (macrolet ((handle-arguments (args env)
+                       ;; All this ELT and LENGTH stuff is not as
+                       ;; inefficient as it looks.  SBCL transforms
+                       ;; &rest into &more here.
+                       `(let* ((restnum 0)
+                               (rest
+                                 (when (or restp keyp)
+                                   (loop for i
+                                         from (+ required-num optional-num)
+                                         below (length ,args)
+                                         collect (elt ,args i)
+                                         do (incf restnum))))
+                               (my-default-values* default-values*)
+                               (my-keywords keywords))
+                          (declare (fixnum restnum))
+                          (prog ((argi 0)
+                                 (vari 0))
+                             (declare (type fixnum argi vari))
+                           positional
+                             (when (>= argi (length ,args))
+                               (go missing-optionals))
+                             (when (>= argi (the fixnum (+ required-num optional-num)))
+                               (go keys))
+                             (setf (environment-value ,env 0 vari) (elt ,args argi))
+                             (when (>= argi required-num)
+                               (pop my-default-values*)
+                               (incf vari)
+                               (setf (environment-value ,env 0 vari) t))
                              (incf vari)
-                             (setf (environment-value ,env 0 vari) t))
-                           (incf vari)
-                           (incf argi)
-                           (go positional)
-                         missing-optionals
-                           (unless (>= argi required-num)
-                             (error 'sb-int:simple-program-error
-                                    :format-arguments "invalid number of arguments: ~D" (length args)))
-                           (when (>= vari (the fixnum (+ required-num (the fixnum (* 2 optional-num)))))
-                             (go keys))
-                           (let ((val* (pop my-default-values*)))
-                             (setf (environment-value ,env 0 vari)
-                                   (funcall (the eval-closure val*) ,env)
-                                   (environment-value ,env 0 (1+ vari))
-                                   nil))
-                           (incf vari 2)
-                           (go missing-optionals)
-                         keys
-                           (unless keyp
-                             (unless (or restp (= argi (length args)))
+                             (incf argi)
+                             (go positional)
+                           missing-optionals
+                             (unless (>= argi required-num)
                                (error 'sb-int:simple-program-error
                                       :format-arguments "invalid number of arguments: ~D" (length args)))
-                             (go aux))
-                           (unless (evenp restnum)
-                             (error 'sb-int:simple-program-error
-                                    :format-arguments "odd number of keyword arguments: ~D" rest))
-                           (when (>= vari
-                                     (the fixnum
-                                          (+ required-num (* 2 (+ optional-num key-num)))))
-                             ;; fixme: check &allow-other-keys and :allow-other-keys
-                             (unless (or allowp
-                                         (getf rest :allow-other-keys nil))
-                               (loop for (k v) on rest by #'cddr
-                                     unless (member k
-                                                    (cons :allow-other-keys keywords)
-                                                    :test #'eq)
-                                     do (error 'sb-int:simple-program-error
-                                               :format-control "unknown &KEY argument: ~A"
-                                               :format-arguments (list k))))
-                             (go aux))
-                           (let* ((key  (the keyword (pop my-keywords)))
-                                  (val* (pop my-default-values*))
-                                  (x    (getf rest key unbound)))
-                             (if (eq unbound x)
-                                 (setf (environment-value ,env 0 vari)
-                                       (funcall (the eval-closure val*) ,env)
-                                       (environment-value ,env 0 (1+ vari))
-                                       nil)
-                                 (setf (environment-value ,env 0 vari)
-                                       x
-                                       (environment-value ,env 0 (1+ vari))
-                                       t)))
-                           (incf vari 2)
-                           (go keys)
-                         aux
-                           (when (>= vari
-                                     (the fixnum
-                                          (+ required-num
-                                             (the fixnum (* 2 (+ optional-num key-num)))
-                                             aux-num)))
-                             (go rest))
-                           (let ((val* (pop my-default-values*)))
-                             (setf (environment-value ,env 0 vari)
-                                   (funcall (the eval-closure val*) ,env)))
-                           (incf vari)
-                           (go aux)
-                         rest
-                           (assert (null my-default-values*))
-                           (when restp
-                             (setf (environment-value ,env 0 (1- varnum))
-                                   rest))))))
-          (if envp
-              (lambda (env)
-                (lambda (&rest args)
-                  (declare (dynamic-extent args))
-                  (let ((new-env (make-environment env varnum)))
-                    (handle-arguments args new-env)
-                    (funcall body* new-env))))
-              (lambda (env)
-                (lambda (&rest args)
-                  (declare (dynamic-extent args))
-                  (with-dynamic-extent-environment (new-env env varnum)
-                    (handle-arguments args new-env)
-                    (funcall body* new-env))))))))))
+                             (when (>= vari (the fixnum (+ required-num (the fixnum (* 2 optional-num)))))
+                               (go keys))
+                             (let ((val* (pop my-default-values*)))
+                               (setf (environment-value ,env 0 vari)
+                                     (funcall (the eval-closure val*) ,env)
+                                     (environment-value ,env 0 (1+ vari))
+                                     nil))
+                             (incf vari 2)
+                             (go missing-optionals)
+                           keys
+                             (unless keyp
+                               (unless (or restp (= argi (length args)))
+                                 (error 'sb-int:simple-program-error
+                                        :format-arguments "invalid number of arguments: ~D" (length args)))
+                               (go aux))
+                             (unless (evenp restnum)
+                               (error 'sb-int:simple-program-error
+                                      :format-arguments "odd number of keyword arguments: ~D" rest))
+                             (when (>= vari
+                                       (the fixnum
+                                            (+ required-num (* 2 (+ optional-num key-num)))))
+                               ;; fixme: check &allow-other-keys and :allow-other-keys
+                               (unless (or allowp
+                                           (getf rest :allow-other-keys nil))
+                                 (loop for (k v) on rest by #'cddr
+                                       unless (member k
+                                                      (cons :allow-other-keys keywords)
+                                                      :test #'eq)
+                                       do (error 'sb-int:simple-program-error
+                                                 :format-control "unknown &KEY argument: ~A"
+                                                 :format-arguments (list k))))
+                               (go aux))
+                             (let* ((key  (the keyword (pop my-keywords)))
+                                    (val* (pop my-default-values*))
+                                    (x    (getf rest key unbound)))
+                               (if (eq unbound x)
+                                   (setf (environment-value ,env 0 vari)
+                                         (funcall (the eval-closure val*) ,env)
+                                         (environment-value ,env 0 (1+ vari))
+                                         nil)
+                                   (setf (environment-value ,env 0 vari)
+                                         x
+                                         (environment-value ,env 0 (1+ vari))
+                                         t)))
+                             (incf vari 2)
+                             (go keys)
+                           aux
+                             (when (>= vari
+                                       (the fixnum
+                                            (+ required-num
+                                               (the fixnum (* 2 (+ optional-num key-num)))
+                                               aux-num)))
+                               (go rest))
+                             (let ((val* (pop my-default-values*)))
+                               (setf (environment-value ,env 0 vari)
+                                     (funcall (the eval-closure val*) ,env)))
+                             (incf vari)
+                             (go aux)
+                           rest
+                             (assert (null my-default-values*))
+                             (when restp
+                               (setf (environment-value ,env 0 (1- varnum))
+                                     rest))))))
+            (if envp
+                (lambda (env)
+                  (lambda (&rest args)
+                    (declare (dynamic-extent args))
+                    (let ((new-env (make-environment env varnum)))
+                      (handle-arguments args new-env)
+                      (funcall body* new-env))))
+                (lambda (env)
+                  (lambda (&rest args)
+                    (declare (dynamic-extent args))
+                    (with-dynamic-extent-environment (new-env env varnum)
+                      (handle-arguments args new-env)
+                      (funcall body* new-env)))))))))))
 
 (defun context->native-environment (context)
   ;;FIXME
@@ -540,6 +541,25 @@
   ;;FIXME
   (declare (ignore lexenv))
   (make-null-context))
+
+(defun body-decls&forms (exprs)
+  (let* ((decl-exprs
+           (loop while (and (consp (first exprs))
+                            (eq 'declare (first (first exprs))))
+                 for expr = (pop exprs)
+                 collect expr))
+         (decls (mapcan #'rest decl-exprs)))
+    (values decls exprs)))
+
+(defun decl-specials (declaration)
+  (when (eq (first declaration) 'special)
+    (rest declaration)))
+
+(defmacro with-parsed-body ((forms-var specials-var) exprs &body body)
+  (let ((decls (gensym)))
+    `(multiple-value-bind (,decls ,forms-var) (body-decls&forms ,exprs)
+       (let ((,specials-var (mapcan #'decl-specials ,decls)))
+         ,@body))))
 
 (defun globally-special-p (var)
   (eq :special (sb-int:info :variable :kind var)))
@@ -632,154 +652,159 @@
                   (prepare-progn body context)
                   (prepare-nil))))
            ((flet)
-            (destructuring-bind (bindings &rest body) (rest form)
-              (let* ((bindings* (mapcar (lambda (form)
-                                          (if (listp form)
-                                              (cons (first form)
-                                                    (prepare-lambda (rest form) context))
-                                              (cons form (prepare-nil))))
-                                        bindings))
-                     (new-context (context-add-env-functions context (mapcar #'first bindings*)))
-                     (functions (mapcar #'cdr bindings*))
-                     (n (length functions))
-                     (body* (prepare-progn body new-context)))
-                (lambda (env)
-                  (let ((new-env (make-environment env n)))
-                    (loop for i from 0 to n
-                          for f in functions
-                          do (setf (environment-value new-env 0 i)
-                                   (funcall (the eval-closure f) env)))
-                    (funcall body* new-env))))))
+            (destructuring-bind (bindings &rest exprs) (rest form)
+              (with-parsed-body (body specials) exprs
+                (let* ((bindings* (mapcar (lambda (form)
+                                            (if (listp form)
+                                                (cons (first form)
+                                                      (prepare-lambda (rest form) context))
+                                                (cons form (prepare-nil))))
+                                          bindings))
+                       (new-context (context-add-env-functions context (mapcar #'first bindings*)))
+                       (functions (mapcar #'cdr bindings*))
+                       (n (length functions))
+                       (body* (prepare-progn body new-context)))
+                  (lambda (env)
+                    (let ((new-env (make-environment env n)))
+                      (loop for i from 0 to n
+                            for f in functions
+                            do (setf (environment-value new-env 0 i)
+                                     (funcall (the eval-closure f) env)))
+                      (funcall body* new-env)))))))
            ((labels)
-            (destructuring-bind (bindings &rest body) (rest form)
-              (let* ((new-context (context-add-env-functions context (mapcar #'first bindings)))
-                     (bindings* (mapcar (lambda (form)
-                                          (if (listp form)
-                                              (cons (first form)
-                                                    (prepare-lambda (rest form) new-context))
-                                              (cons form (prepare-nil))))
-                                        bindings))
-                     (functions (mapcar #'cdr bindings*))
-                     (n (length functions))
-                     (body* (prepare-progn body new-context)))
-                (lambda (env)
-                  (let ((new-env (make-environment env n)))
-                    (loop for i from 0 to n
-                          for f in functions
-                          do (setf (environment-value new-env 0 i)
-                                   (funcall (the eval-closure f) new-env)))
-                    (funcall body* new-env))))))
+            (destructuring-bind (bindings &rest exprs) (rest form)
+              (with-parsed-body (body specials) exprs
+                (let* ((new-context (context-add-env-functions context (mapcar #'first bindings)))
+                       (bindings* (mapcar (lambda (form)
+                                            (if (listp form)
+                                                (cons (first form)
+                                                      (prepare-lambda (rest form) new-context))
+                                                (cons form (prepare-nil))))
+                                          bindings))
+                       (functions (mapcar #'cdr bindings*))
+                       (n (length functions))
+                       (body* (prepare-progn body new-context)))
+                  (lambda (env)
+                    (let ((new-env (make-environment env n)))
+                      (loop for i from 0 to n
+                            for f in functions
+                            do (setf (environment-value new-env 0 i)
+                                     (funcall (the eval-closure f) new-env)))
+                      (funcall body* new-env)))))))
            ((let)
             ;; FIXME: SPECIAL declarations!
-            (destructuring-bind (bindings &rest body) (rest form)
-              (let* ((real-bindings (mapcar (lambda (form)
-                                              (if (listp form)
-                                                  (cons (first form) (second form))
-                                                  (cons form nil)))
-                                            bindings))
-                     (vars (mapcar #'car real-bindings))
-                     (varnum (length vars))
-                     (envp (or (> varnum +stack-max+)
-                               (maybe-closes-over-p `(progn ,@body) vars)))
-                     (new-context
-                       (context-add-env-lexicals context (list)))
-                     lexical-values*
-                     special-bindings*)
-                (loop for (var . value-form) in real-bindings
-                      for val* = (prepare-form value-form context)
-                      if (globally-special-p var)
+            (destructuring-bind (bindings &rest exprs) (rest form)
+              (with-parsed-body (body specials) exprs
+                (let* ((real-bindings (mapcar (lambda (form)
+                                                (if (listp form)
+                                                    (cons (first form) (second form))
+                                                    (cons form nil)))
+                                              bindings))
+                       (vars (mapcar #'car real-bindings))
+                       (varnum (length vars))
+                       (envp (or (> varnum +stack-max+)
+                                 (maybe-closes-over-p `(progn ,@body) vars)))
+                       (new-context
+                         (context-add-env-lexicals context (list)))
+                       lexical-values*
+                       special-bindings*)
+                  (loop for (var . value-form) in real-bindings
+                        for val* = (prepare-form value-form context)
+                        if (globally-special-p var)
                         collect (cons var val*) into specials 
-                      else
+                        else
                         collect val* into lexicals
                         and do (context-add-env-lexical! new-context var)
-                      finally
-                         (setq lexical-values* lexicals
-                               special-bindings* specials))
-                (let ((body* (prepare-progn body new-context))
-                      (special-vars  (mapcar #'car special-bindings*))
-                      (special-vals* (mapcar #'cdr special-bindings*)))
-                  (if envp
-                      (lambda (env)
-                        (let ((new-env (make-environment env varnum)))
-                          (loop for i from 0 below varnum
-                                for val* in lexical-values*
-                                do (setf (environment-value new-env 0 i)
-                                         (funcall (the eval-closure val*) env)))
-                          (progv
-                              special-vars
-                              (loop for val* in special-vals*
-                                    collect (funcall (the eval-closure val*) env))
-                            (funcall body* new-env))))
-                      (lambda (env)
-                        (with-dynamic-extent-environment (new-env env varnum)
-                          (loop for i from 0 below varnum
-                                for val* in lexical-values*
-                                do (setf (environment-value new-env 0 i)
-                                         (funcall (the eval-closure val*) env)))
-                          (progv
-                              special-vars
-                              (loop for val* in special-vals*
-                                    collect (funcall (the eval-closure val*) env))
-                            (funcall body* new-env)))))))))
+                        finally
+                           (setq lexical-values* lexicals
+                                 special-bindings* specials))
+                  (let ((body* (prepare-progn body new-context))
+                        (special-vars  (mapcar #'car special-bindings*))
+                        (special-vals* (mapcar #'cdr special-bindings*)))
+                    (if envp
+                        (lambda (env)
+                          (let ((new-env (make-environment env varnum)))
+                            (loop for i from 0 below varnum
+                                  for val* in lexical-values*
+                                  do (setf (environment-value new-env 0 i)
+                                           (funcall (the eval-closure val*) env)))
+                            (progv
+                                special-vars
+                                (loop for val* in special-vals*
+                                      collect (funcall (the eval-closure val*) env))
+                              (funcall body* new-env))))
+                        (lambda (env)
+                          (with-dynamic-extent-environment (new-env env varnum)
+                            (loop for i from 0 below varnum
+                                  for val* in lexical-values*
+                                  do (setf (environment-value new-env 0 i)
+                                           (funcall (the eval-closure val*) env)))
+                            (progv
+                                special-vars
+                                (loop for val* in special-vals*
+                                      collect (funcall (the eval-closure val*) env))
+                              (funcall body* new-env))))))))))
            ((let*)
             ;; FIXME: SPECIAL declarations!
-            (destructuring-bind (bindings &rest body) (rest form)
-              (let* ((real-bindings (mapcar (lambda (form)
-                                              (if (listp form)
-                                                  (cons (first form) (second form))
-                                                  (cons form nil)))
-                                            bindings))
-                     (vars (mapcar #'car real-bindings))
-                     (varnum (length vars))
-                     (envp (or (> varnum +stack-max+)
-                               (maybe-closes-over-p `(progn ,@body) vars)))
-                     (new-context
-                       (context-add-env-lexicals context (list)))
-                     lexical-values*
-                     special-bindings*)
-                (loop for (var . value-form) in real-bindings
-                      for val* = (prepare-form value-form new-context)
-                      if (globally-special-p var)
+            (destructuring-bind (bindings &rest exprs) (rest form)
+              (with-parsed-body (body specials) exprs
+                (let* ((real-bindings (mapcar (lambda (form)
+                                                (if (listp form)
+                                                    (cons (first form) (second form))
+                                                    (cons form nil)))
+                                              bindings))
+                       (vars (mapcar #'car real-bindings))
+                       (varnum (length vars))
+                       (envp (or (> varnum +stack-max+)
+                                 (maybe-closes-over-p `(progn ,@body) vars)))
+                       (new-context
+                         (context-add-env-lexicals context (list)))
+                       lexical-values*
+                       special-bindings*)
+                  (loop for (var . value-form) in real-bindings
+                        for val* = (prepare-form value-form new-context)
+                        if (globally-special-p var)
                         collect (cons var val*) into specials 
-                      else
+                        else
                         collect val* into lexicals
                         and do (context-add-env-lexical! new-context var)
-                      finally
-                         (setq lexical-values* lexicals
-                               special-bindings* specials))
-                (let ((body* (prepare-progn body new-context))
-                      (special-vars  (mapcar #'car special-bindings*))
-                      (special-vals* (mapcar #'cdr special-bindings*)))
-                  (if envp
-                      (lambda (env)
-                        (let ((new-env (make-environment env varnum)))
-                          (loop for i from 0 below varnum
-                                for val* in lexical-values*
-                                do (setf (environment-value new-env 0 i)
-                                         (funcall (the eval-closure val*) new-env)))
-                          (progv
-                              special-vars
-                              (loop for val* in special-vals*
-                                    collect (funcall (the eval-closure val*) new-env))
-                            (funcall body* new-env))))
-                      (lambda (env)
-                        (with-dynamic-extent-environment (new-env env varnum)
-                          (loop for i from 0 below varnum
-                                for val* in lexical-values*
-                                do (setf (environment-value new-env 0 i)
-                                         (funcall (the eval-closure val*) new-env)))
-                          (progv
-                              special-vars
-                              (loop for val* in special-vals*
-                                    collect (funcall (the eval-closure val*) new-env))
-                            (funcall body* new-env)))))))))
+                        finally
+                           (setq lexical-values* lexicals
+                                 special-bindings* specials))
+                  (let ((body* (prepare-progn body new-context))
+                        (special-vars  (mapcar #'car special-bindings*))
+                        (special-vals* (mapcar #'cdr special-bindings*)))
+                    (if envp
+                        (lambda (env)
+                          (let ((new-env (make-environment env varnum)))
+                            (loop for i from 0 below varnum
+                                  for val* in lexical-values*
+                                  do (setf (environment-value new-env 0 i)
+                                           (funcall (the eval-closure val*) new-env)))
+                            (progv
+                                special-vars
+                                (loop for val* in special-vals*
+                                      collect (funcall (the eval-closure val*) new-env))
+                              (funcall body* new-env))))
+                        (lambda (env)
+                          (with-dynamic-extent-environment (new-env env varnum)
+                            (loop for i from 0 below varnum
+                                  for val* in lexical-values*
+                                  do (setf (environment-value new-env 0 i)
+                                           (funcall (the eval-closure val*) new-env)))
+                            (progv
+                                special-vars
+                                (loop for val* in special-vals*
+                                      collect (funcall (the eval-closure val*) new-env))
+                              (funcall body* new-env))))))))))
            ((load-time-value)
             (let ((load-form (cadr form)))
               ;; FIXME
               (prepare-form load-form)))
            ((locally)
-            (destructuring-bind (&rest body) (rest form)
-              (prepare-progn body context)))
+            (destructuring-bind (&rest exprs) (rest form)
+              (with-parsed-body (body specials) exprs
+               (prepare-progn body context))))
            ((multiple-value-call)
             (destructuring-bind (f &rest argforms) (rest form)
               (let ((f* (prepare-form f context))
@@ -819,17 +844,18 @@
                     primary-value)))))
            ((multiple-value-bind)
             ;; FIXME: SPECIAL declarations!
-            (destructuring-bind (vars value-form &body body) (rest form)
-              (let* ((value-form* (prepare-form value-form context))
-                     (n           (length (the list vars)))
-                     (new-context (context-add-env-lexicals context vars))
-                     (body*       (prepare-progn body new-context)))
-                (lambda (env)
-                  (let* ((new-env (make-environment env n))
-                         (values  (multiple-value-list (funcall value-form* env))))
-                    (dotimes (i n)
-                      (setf (environment-value new-env 0 i) (pop values)))
-                    (funcall body* new-env))))))
+            (destructuring-bind (vars value-form &body exprs) (rest form)
+              (with-parsed-body (body specials) exprs
+                (let* ((value-form* (prepare-form value-form context))
+                       (n           (length (the list vars)))
+                       (new-context (context-add-env-lexicals context vars))
+                       (body*       (prepare-progn body new-context)))
+                  (lambda (env)
+                    (let* ((new-env (make-environment env n))
+                           (values  (multiple-value-list (funcall value-form* env))))
+                      (dotimes (i n)
+                        (setf (environment-value new-env 0 i) (pop values)))
+                      (funcall body* new-env)))))))
            ((progn)
             (prepare-progn (rest form) context))
            ((progv)
@@ -871,24 +897,26 @@
            ((sb-int:named-lambda)
             (prepare-lambda (cddr form) context))
            ((symbol-macrolet)
-            (destructuring-bind (bindings &rest body) (rest form)
-              (let ((bindings (mapcar (lambda (form)
-                                        (cons (first form) (second form)))
-                                      bindings)))
-                (prepare-progn body (context-add-symbol-macros context bindings)))))
+            (destructuring-bind (bindings &rest exprs) (rest form)
+              (with-parsed-body (body specials) exprs
+                (let ((bindings (mapcar (lambda (form)
+                                          (cons (first form) (second form)))
+                                        bindings)))
+                  (prepare-progn body (context-add-symbol-macros context bindings))))))
            ((macrolet)
             ;; FIXME: This doesn't actually work because we disregard
             ;; the lambda list when calling the macro.
-            (destructuring-bind (bindings &rest body) (rest form)
-              (let ((bindings (mapcar (lambda (form)
-                                        (cons (first form)
-                                              (funcall
-                                               (prepare-macro-lambda (first form)
-                                                                     (rest form)
-                                                                     context)
-                                               (make-null-environment))))
-                                      bindings)))
-                (prepare-progn body (context-add-macros context bindings)))))
+            (destructuring-bind (bindings &rest exprs) (rest form)
+              (with-parsed-body (body specials) exprs
+                (let ((bindings (mapcar (lambda (form)
+                                          (cons (first form)
+                                                (funcall
+                                                 (prepare-macro-lambda (first form)
+                                                                       (rest form)
+                                                                       context)
+                                                 (make-null-environment))))
+                                        bindings)))
+                  (prepare-progn body (context-add-macros context bindings))))))
            ((go)
             (let* ((go-tag    (second form))
                    (catch-tag (context-find-go-tag context go-tag)))
