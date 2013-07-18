@@ -313,7 +313,7 @@
               (last-form* (first (last body*))))
           (lambda (env)
             (dolist (form* forms*)
-              (funcall (funcall (the eval-closure form*) env)))
+              (funcall (the eval-closure form*) env))
             (funcall (the eval-closure last-form*) env))))))
 
 (defun lambda-binding-vars (entry)
