@@ -127,6 +127,9 @@
       (dolist (new-go-tag new-go-tags)
         (setq go-tags (acons new-go-tag catch-tag go-tags))))
     new-context))
+(defun context-collect (context f)
+  (let ((parent (context-parent context)))
+    (append (funcall f context) (and parent (context-collect parent f)))))
 (defun context-find-go-tag (context go-tag)
   (let ((parent (context-parent context)))
     (or (cdr (assoc (the symbol go-tag) (context-go-tags context)))
@@ -519,8 +522,13 @@
 
 (defun context->native-environment (context)
   ;;FIXME
-  (declare (ignore context))
-  (sb-c::internal-make-lexenv nil nil nil nil nil nil nil nil nil nil nil))
+  (let ((functions
+          (loop for (name . expander) in (context-collect context 'context-macros)
+                collect `(,name . (sb-c::macro . ,expander))))
+        (vars
+          (loop for (name . form) in (context-collect context 'context-symbol-macros)
+                collect `(,name . (sb-c::macro . form)))))
+    (sb-c::internal-make-lexenv functions vars nil nil nil nil nil nil nil nil nil)))
 
 (defun native-environment->context (lexenv)
   ;;FIXME
