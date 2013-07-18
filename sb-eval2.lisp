@@ -156,12 +156,15 @@
         (finishp nil))
     (loop until finishp
           collect
-             (let ((tag next-form)
-                   (forms (loop until (symbolp (setq next-form (pop forms)))
-                                collect next-form)))
+             (progn
                (unless forms
-                 (setq finishp t))
-               (cons tag forms)))))
+                 (setq finishp (null forms)))
+               (let ((tag next-form)
+                     (current-forms (loop for current-form = (pop forms)
+                                          do (setq next-form current-form)
+                                          until (symbolp current-form)
+                                          collect current-form)))
+                 (cons tag current-forms))))))
 (defun context-var-lexical-p (context var)
   (context-find-lexical context var))
 (defun context-add-env-lexicals (context vars)
