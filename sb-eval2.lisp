@@ -446,7 +446,9 @@
                            (incf argi)
                            (go positional)
                          missing-optionals
-                           (assert (>= argi required-num))
+                           (unless (>= argi required-num)
+                             (error 'sb-int:simple-program-error
+                                    :format-arguments "invalid number of arguments: ~D" (length args)))
                            (when (>= vari (the fixnum (+ required-num (the fixnum (* 2 optional-num)))))
                              (go keys))
                            (let ((val* (pop my-default-values*)))
@@ -458,9 +460,13 @@
                            (go missing-optionals)
                          keys
                            (unless keyp
-                             (assert (or restp (= argi (length args))))
+                             (unless (or restp (= argi (length args)))
+                               (error 'sb-int:simple-program-error
+                                      :format-arguments "invalid number of arguments: ~D" (length args)))
                              (go aux))
-                           (assert (evenp restnum))
+                           (unless (evenp restnum)
+                             (error 'sb-int:simple-program-error
+                                    :format-arguments "odd number of keyword arguments: ~D" rest))
                            (when (>= vari
                                      (the fixnum
                                           (+ required-num (* 2 (+ optional-num key-num)))))
