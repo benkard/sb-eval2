@@ -77,7 +77,9 @@
   nil)
 
 (defun maybe-closes-over-p (context form vars)
-  (maybe-closes-over-p/env form vars (context->native-environment context)))
+  (handler-case
+      (maybe-closes-over-p/env form vars (context->native-environment context))
+    (serious-condition () t)))
 
 (defun maybe-closes-over-p/env (form vars env)
   ;; Use `(function ,name) for local functions.
