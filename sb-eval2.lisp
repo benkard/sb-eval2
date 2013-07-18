@@ -718,7 +718,6 @@
                                      (funcall (the eval-closure f) new-env)))
                       (funcall body* new-env)))))))
            ((let)
-            ;; FIXME: SPECIAL declarations!
             (destructuring-bind (bindings &rest exprs) (rest form)
               (with-parsed-body (body specials) exprs
                 (let* ((real-bindings (mapcar (lambda (form)
