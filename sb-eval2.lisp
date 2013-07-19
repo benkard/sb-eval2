@@ -86,13 +86,6 @@
     (serious-condition () t)))
 
 (defun maybe-closes-over-p/env (form vars env)
-  ;; Use `(function ,name) for local functions.
-  ;;
-  ;; NOTE: This is a *very* simplistic algorithm with a *lot* of false
-  ;; positives.
-  ;;
-  ;; FIXME: This doesn't do macro expansion, so it's probably
-  ;; incorrect.
   (let ((sb-walker::*walk-form-expand-macros-p* t))
     (sb-walker:walk-form
      form
