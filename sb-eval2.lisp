@@ -40,7 +40,11 @@
             (,data% (make-array (list ,size%)))
             (,var (%make-environment :parent ,parent :data ,data%)))
        (declare (type (mod #.(1+ +stack-max+)) ,size%)
-                (dynamic-extent ,var)
+                ;; we must not allocate environment objects on the
+                ;; stack unless we can be sure that all child
+                ;; environments will also be allocated on the stack,
+                ;; but we can't really know that.
+                ;(dynamic-extent ,var)
                 (dynamic-extent ,data%))
        ,@body)))
 
