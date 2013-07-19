@@ -455,11 +455,13 @@
                (new-context (make-lexical-context context))
                (varspecs (list))
                (varnum 0)
+               (specialsp nil)
                (default-values*
                  (flet ((register-var (var)
                           (if (or (member var specials :test #'eq)
                                   (globally-special-p var))
                               (progn
+                                (setq specialsp t)
                                 (context-add-special! new-context var)
                                 (push (cons :special var) varspecs))
                               (progn
@@ -499,17 +501,23 @@
                           (my-default-values* default-values*)
                           (my-keywords keywords)
                           (my-varspecs varspecs)
-                          (argi 0)
-                          (vari 0)
-                          (i 0))
+                          (saved-binding-pointer
+                            (when specialsp
+                              (sb-c::%primitive
+                               sb-c::current-binding-pointer)))
+                          (argi 0)  ;how many actual arguments have
+                                    ;been processed
+                          (vari 0)  ;how many lexical vars have been
+                                    ;bound
+                          (i 0))    ;how many formal arguments have
+                                    ;been processed
                      (declare (fixnum restnum argi vari i))
                      (labels
                          ((iter ()
                             (flet ((push-args (&rest values)
                                      ;; Push VALUES onto the
                                      ;; environment.
-                                     (let ((dynvals (list))
-                                           (dynvars (list)))
+                                     (let ()
                                        (incf i)
                                        (dolist (value values)
                                          (let ((varspec (pop my-varspecs)))
@@ -523,13 +531,9 @@
                                                  (assert (eq :special
                                                              (car varspec))
                                                          (varspec))
-                                                 (push (cdr varspec) dynvars)
-                                                 (push value dynvals)))))
-                                       (when dynvals
-                                         (progv
-                                             dynvars
-                                             dynvals
-                                           (return-from iter (iter)))))))
+                                                 (assert specialsp)
+                                                 (sb-c::%primitive
+                                                  sb-c::bind value (cdr varspec)))))))))
                               (declare (inline push-args))
                               (tagbody
                                positional
@@ -615,7 +619,11 @@
                                    (push-args rest))
                                final-call
                                  (return-from iter
-                                   (funcall body* *new-env*))))))
+                                   (unwind-protect
+                                        (funcall body* *new-env*)
+                                     (when specialsp
+                                       (sb-c::%primitive
+                                        sb-c::unbind-to-here saved-binding-pointer))))))))
                        (iter)))))
               ;;(declare (inline handle-arguments))
               (if envp
