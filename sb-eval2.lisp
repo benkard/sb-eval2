@@ -354,7 +354,7 @@
       (apply (the (or symbol function) (funcall (the eval-closure f) env))
              (mapcar (lambda (x) (funcall (the eval-closure x) env)) args*)))))
 
-(declaim (ftype (function (list context) eval-closure) prepare-progn))
+(declaim (ftype (function (list context) (values eval-closure &rest nil)) prepare-progn))
 (defun prepare-progn (forms context)
   (let ((body* (mapcar (lambda (form) (prepare-form form context)) forms)))
     (if (null body*)
@@ -418,11 +418,16 @@
                        ,body-form)
                     context))))
 
+(defmacro incff (x &optional (num 1))
+  (let ((old-x (gensym)))
+    `(let ((,old-x ,x))
+       (incf ,x ,num)
+       ,old-x)))
+
 (declaim (ftype (function * eval-closure) prepare-lambda))
 (defun prepare-lambda (lambda-form context)
   (destructuring-bind (lambda-list &rest exprs) lambda-form
     (with-parsed-body (body specials) exprs
-      ;; FIXME: SPECIAL declarations!
       (multiple-value-bind (required optional restp rest keyp keys allowp auxp aux
                             morep more-context more-count)
           (sb-int:parse-lambda-list lambda-list)
@@ -449,19 +454,29 @@
                          (maybe-closes-over-p context `(progn ,@body) argvars)
                          (some (lambda (x) (maybe-closes-over-p context x argvars))
                                default-values)))
-               (new-context (context-add-env-lexicals context required))
+               (new-context (make-context context))
+               (varspecs (list))
                (default-values*
-                 (loop for default-value in default-values
-                       for binding in (append optional keys aux)
-                       for vars = (lambda-binding-vars binding)
-                       collect (prepare-form default-value new-context)
-                       do (dolist (var vars)
-                            (context-add-env-lexical! new-context var))
-                       finally (when restp
-                                 (context-add-env-lexical! new-context rest))))
+                 (flet ((register-var (var)
+                          (if (or (member var specials :test #'eq)
+                                  (globally-special-p var))
+                              (progn
+                                (context-add-special! new-context var)
+                                (push (cons :special var) varspecs))
+                              (progn
+                                (context-add-env-lexical! new-context var)
+                                (push :lexical varspecs)))))
+                   (mapc #'register-var required)
+                   (loop for default-value in default-values
+                         for binding in (append optional keys aux)
+                         for vars = (lambda-binding-vars binding)
+                         collect (prepare-form default-value new-context)
+                         do (mapc #'register-var vars)
+                         finally (when restp (register-var rest)))))
                (body* (prepare-progn body new-context))
                (unbound (gensym)))
-          (macrolet ((handle-arguments (args env)
+          (setq varspecs (nreverse varspecs))
+          (macrolet ((handle-arguments (args env body*)
                        ;; All this ELT and LENGTH stuff is not as
                        ;; inefficient as it looks.  SBCL transforms
                        ;; &rest into &more here.
@@ -473,105 +488,144 @@
                                          below (length ,args)
                                          collect (elt ,args i)
                                          do (incf restnum))))
+                               (keys-checked-p nil)
                                (my-default-values* default-values*)
-                               (my-keywords keywords))
-                          (declare (fixnum restnum))
-                          (prog ((argi 0)
-                                 (vari 0))
-                             (declare (type fixnum argi vari))
-                           positional
-                             (when (>= argi (length ,args))
-                               (go missing-optionals))
-                             (when (>= argi (the fixnum (+ required-num optional-num)))
-                               (go keys))
-                             (setf (environment-value ,env 0 vari) (elt ,args argi))
-                             (when (>= argi required-num)
-                               (pop my-default-values*)
-                               (incf vari)
-                               (setf (environment-value ,env 0 vari) t))
-                             (incf vari)
-                             (incf argi)
-                             (go positional)
-                           missing-optionals
-                             (unless (>= argi required-num)
-                               (error 'sb-int:simple-program-error
-                                      :format-arguments "invalid number of arguments: ~D" (length args)))
-                             (when (>= vari (the fixnum (+ required-num (the fixnum (* 2 optional-num)))))
-                               (go keys))
-                             (let ((val* (pop my-default-values*)))
-                               (setf (environment-value ,env 0 vari)
-                                     (funcall (the eval-closure val*) ,env)
-                                     (environment-value ,env 0 (1+ vari))
-                                     nil))
-                             (incf vari 2)
-                             (go missing-optionals)
-                           keys
-                             (unless keyp
-                               (unless (or restp (= argi (length args)))
-                                 (error 'sb-int:simple-program-error
-                                        :format-arguments "invalid number of arguments: ~D" (length args)))
-                               (go aux))
-                             (unless (evenp restnum)
-                               (error 'sb-int:simple-program-error
-                                      :format-arguments "odd number of keyword arguments: ~D" rest))
-                             (when (>= vari
-                                       (the fixnum
-                                            (+ required-num (* 2 (+ optional-num key-num)))))
-                               ;; fixme: check &allow-other-keys and :allow-other-keys
-                               (unless (or allowp
-                                           (getf rest :allow-other-keys nil))
-                                 (loop for (k v) on rest by #'cddr
-                                       unless (member k
-                                                      (cons :allow-other-keys keywords)
-                                                      :test #'eq)
-                                       do (error 'sb-int:simple-program-error
-                                                 :format-control "unknown &KEY argument: ~A"
-                                                 :format-arguments (list k))))
-                               (go aux))
-                             (let* ((key  (the keyword (pop my-keywords)))
-                                    (val* (pop my-default-values*))
-                                    (x    (getf rest key unbound)))
-                               (if (eq unbound x)
-                                   (setf (environment-value ,env 0 vari)
-                                         (funcall (the eval-closure val*) ,env)
-                                         (environment-value ,env 0 (1+ vari))
-                                         nil)
-                                   (setf (environment-value ,env 0 vari)
-                                         x
-                                         (environment-value ,env 0 (1+ vari))
-                                         t)))
-                             (incf vari 2)
-                             (go keys)
-                           aux
-                             (when (>= vari
-                                       (the fixnum
-                                            (+ required-num
-                                               (the fixnum (* 2 (+ optional-num key-num)))
-                                               aux-num)))
-                               (go rest))
-                             (let ((val* (pop my-default-values*)))
-                               (setf (environment-value ,env 0 vari)
-                                     (funcall (the eval-closure val*) ,env)))
-                             (incf vari)
-                             (go aux)
-                           rest
-                             (assert (null my-default-values*))
-                             (when restp
-                               (setf (environment-value ,env 0 (1- varnum))
-                                     rest))))))
+                               (my-keywords keywords)
+                               (my-varspecs varspecs)
+                               (argi 0)
+                               (vari 0)
+                               (i 0))
+                          (declare (fixnum restnum argi vari i))
+                          (print varspecs)
+                          (print my-default-values*)
+                          (labels
+                              ((iter ()
+                                 (print "ITER")
+                                 (flet ((push-args (&rest values)
+                                          ;; Push VALUES onto the
+                                          ;; environment.
+                                          (format t "~&PUSH-ARG ~D" vari)
+                                          (let ((dynvals (list))
+                                                (dynvars (list)))
+                                            (dolist (value values)
+                                              (incf i)
+                                              (let ((varspec (pop my-varspecs)))
+                                                (format t "~&VARSPEC = ~S" varspec)
+                                                (if (eq varspec :lexical)
+                                                    (progn
+                                                      (setf
+                                                       (environment-value ,env 0 vari)
+                                                       value)
+                                                      (incf vari))
+                                                    (progn
+                                                      (assert (eq :special (car varspec))
+                                                              (varspec))
+                                                      (push (cdr varspec) dynvars)
+                                                      (push value dynvals)))))
+                                            (when dynvals
+                                              (progv
+                                                  dynvars
+                                                  dynvals
+                                                (return-from iter (iter)))))))
+                                   (declare (inline push-args))
+                                   (tagbody
+                                    positional
+                                      (print "; positional")
+                                      (when (>= argi (length ,args))
+                                        (go missing-optionals))
+                                      (when (>= argi (the fixnum (+ required-num optional-num)))
+                                        (go keys))
+                                      (if (>= argi required-num)
+                                        (progn
+                                          (print "POP DEFAULT")
+                                          (pop my-default-values*)
+                                          (push-args (elt ,args (incff argi)) t))
+                                        (push-args (elt ,args (incff argi))))
+                                      (go positional)
+                                    missing-optionals
+                                      (print "; missing-optionals")
+                                      (unless (>= argi required-num)
+                                        (error 'sb-int:simple-program-error
+                                               :format-control "invalid number of arguments: ~D"
+                                               :format-arguments (list (length args))))
+                                      (when (>= i (the fixnum (+ required-num
+                                                                 optional-num)))
+                                        (go keys))
+                                      (let ((val* (pop my-default-values*)))
+                                        (push-args (funcall (the eval-closure val*) ,env) nil))
+                                      (go missing-optionals)
+                                    keys
+                                      (print "; missing-optionals")
+                                      (unless keyp
+                                        (unless (or restp (= argi (length args)))
+                                          (error 'sb-int:simple-program-error
+                                                 :format-control "invalid number of arguments: ~D"
+                                                 :format-arguments (list (length args))))
+                                        (go aux))
+                                      (unless (evenp restnum)
+                                        (error 'sb-int:simple-program-error
+                                               :format-control "odd number of keyword arguments: ~D"
+                                               :format-arguments (list rest)))
+                                      (when (>= i
+                                                (the fixnum
+                                                     (+ required-num
+                                                        (the fixnum
+                                                             (+ optional-num
+                                                                key-num)))))
+                                        (unless (or keys-checked-p
+                                                    allowp
+                                                    (getf rest :allow-other-keys nil))
+                                          (loop for (k v) on rest by #'cddr
+                                                unless (member k
+                                                               (cons :allow-other-keys keywords)
+                                                               :test #'eq)
+                                                do (error 'sb-int:simple-program-error
+                                                          :format-control "unknown &KEY argument: ~A"
+                                                          :format-arguments (list k)))
+                                          (setq keys-checked-p t))
+                                        (go aux))
+                                      (let* ((key  (the keyword (pop my-keywords)))
+                                             (val* (pop my-default-values*))
+                                             (x    (getf rest key unbound)))
+                                        (if (eq unbound x)
+                                            (progn
+                                              (push-args (the eval-closure val*) nil))
+                                            (progn
+                                              (push-args x t))))
+                                      (go keys)
+                                    aux
+                                      (when (>= i
+                                                (the fixnum
+                                                     (+ required-num
+                                                        (the fixnum
+                                                             (+ optional-num
+                                                                key-num))
+                                                        aux-num)))
+                                        (go rest))
+                                      (let ((val* (pop my-default-values*)))
+                                        (push-args (funcall (the eval-closure val*) ,env)))
+                                      (go aux)
+                                    rest
+                                      (assert (null my-default-values*))
+                                      (when restp
+                                        (push-args rest))
+                                    final-call
+                                      (return-from iter
+                                        (funcall ,body* ,env))))))
+                            (iter)))))
             (if envp
                 (lambda (env)
                   (lambda (&rest args)
                     (declare (dynamic-extent args))
+                    ;;XXX VARNUM is too big--- need only lexicals
                     (let ((new-env (make-environment env varnum)))
-                      (handle-arguments args new-env)
-                      (funcall body* new-env))))
+                      (handle-arguments args new-env body*))))
                 (lambda (env)
                   (lambda (&rest args)
                     (declare (dynamic-extent args))
+                    ;;XXX VARNUM is too big--- need only lexicals
                     (with-dynamic-extent-environment (new-env env varnum)
-                      (handle-arguments args new-env)
-                      (funcall body* new-env)))))))))))
+                      (handle-arguments args new-env body*)))))))))))
 
 (defun context->native-environment (context)
   ;;FIXME
