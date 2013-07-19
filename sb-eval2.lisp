@@ -480,17 +480,19 @@
                (body* (prepare-progn body new-context))
                (unbound (gensym)))
           (setq varspecs (nreverse varspecs))
-          (macrolet ((handle-arguments (args env)
+          (let (*new-env*)
+            (declare (special *new-env*))
+            (flet ((handle-arguments (&rest args)
                        ;; All this ELT and LENGTH stuff is not as
                        ;; inefficient as it looks.  SBCL transforms
                        ;; &rest into &more here.
-                       `(let* ((restnum 0)
+                        (let* ((restnum 0)
                                (rest
                                  (when (or restp keyp)
                                    (loop for i
                                          from (+ required-num optional-num)
-                                         below (length ,args)
-                                         collect (elt ,args i)
+                                         below (length args)
+                                         collect (elt args i)
                                          do (incf restnum))))
                                (keys-checked-p nil)
                                (my-default-values* default-values*)
@@ -513,7 +515,7 @@
                                                 (if (eq varspec :lexical)
                                                     (progn
                                                       (setf
-                                                       (environment-value ,env 0 vari)
+                                                       (environment-value *new-env* 0 vari)
                                                        value)
                                                       (incf vari))
                                                     (progn
@@ -530,7 +532,7 @@
                                    (declare (inline push-args))
                                    (tagbody
                                     positional
-                                      (when (>= argi (length ,args))
+                                      (when (>= argi (length args))
                                         (go missing-optionals))
                                       (when (>= argi (the fixnum
                                                           (+ required-num optional-num)))
@@ -538,8 +540,8 @@
                                       (if (>= argi required-num)
                                         (progn
                                           (pop my-default-values*)
-                                          (push-args (elt ,args (incff argi)) t))
-                                        (push-args (elt ,args (incff argi))))
+                                          (push-args (elt args (incff argi)) t))
+                                        (push-args (elt args (incff argi))))
                                       (go positional)
                                     missing-optionals
                                       (unless (>= argi required-num)
@@ -551,7 +553,7 @@
                                         (go keys))
                                       (let ((val* (pop my-default-values*)))
                                         (push-args (funcall (the eval-closure val*)
-                                                            ,env)
+                                                            *new-env*)
                                                    nil))
                                       (go missing-optionals)
                                     keys
@@ -603,7 +605,7 @@
                                         (go rest))
                                       (let ((val* (pop my-default-values*)))
                                         (push-args (funcall (the eval-closure val*)
-                                                            ,env)))
+                                                            *new-env*)))
                                       (go aux)
                                     rest
                                       (assert (null my-default-values*))
@@ -611,20 +613,23 @@
                                         (push-args rest))
                                     final-call
                                       (return-from iter
-                                        (funcall body* ,env))))))
+                                        (funcall body* *new-env*))))))
                             (iter)))))
+            ;;(declare (inline handle-arguments))
             (if envp
                 (lambda (env)
                   (lambda (&rest args)
                     (declare (dynamic-extent args))
-                    (let ((new-env (make-environment env varnum)))
-                      (handle-arguments args new-env))))
+                    (let ((*new-env* (make-environment env varnum)))
+                      (declare (special *new-env*))
+                      (apply #'handle-arguments args))))
                 (lambda (env)
                   (lambda (&rest args)
                     (declare (dynamic-extent args))
                     ;;XXX VARNUM is too big--- need only lexicals
-                    (with-dynamic-extent-environment (new-env env varnum)
-                      (handle-arguments args new-env)))))))))))
+                    (with-dynamic-extent-environment (*new-env* env varnum)
+                      (declare (special *new-env*))
+                      (apply #'handle-arguments args))))))))))))
 
 (defun context->native-environment (context)
   ;;FIXME
