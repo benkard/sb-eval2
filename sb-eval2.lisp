@@ -481,7 +481,7 @@
                (body* (prepare-progn body new-context))
                (unbound (gensym)))
           (setq varspecs (nreverse varspecs))
-          (macrolet ((handle-arguments (args env body*)
+          (macrolet ((handle-arguments (args env)
                        ;; All this ELT and LENGTH stuff is not as
                        ;; inefficient as it looks.  SBCL transforms
                        ;; &rest into &more here.
@@ -533,7 +533,8 @@
                                     positional
                                       (when (>= argi (length ,args))
                                         (go missing-optionals))
-                                      (when (>= argi (the fixnum (+ required-num optional-num)))
+                                      (when (>= argi (the fixnum
+                                                          (+ required-num optional-num)))
                                         (go keys))
                                       (if (>= argi required-num)
                                         (progn
@@ -550,10 +551,11 @@
                                                                  optional-num)))
                                         (go keys))
                                       (let ((val* (pop my-default-values*)))
-                                        (push-args (funcall (the eval-closure val*) ,env) nil))
+                                        (push-args (funcall (the eval-closure val*)
+                                                            ,env)
+                                                   nil))
                                       (go missing-optionals)
                                     keys
-                                      (print "; missing-optionals")
                                       (unless keyp
                                         (unless (or restp (= argi (length args)))
                                           (error 'sb-int:simple-program-error
@@ -601,7 +603,8 @@
                                                         aux-num)))
                                         (go rest))
                                       (let ((val* (pop my-default-values*)))
-                                        (push-args (funcall (the eval-closure val*) ,env)))
+                                        (push-args (funcall (the eval-closure val*)
+                                                            ,env)))
                                       (go aux)
                                     rest
                                       (assert (null my-default-values*))
@@ -609,20 +612,20 @@
                                         (push-args rest))
                                     final-call
                                       (return-from iter
-                                        (funcall ,body* ,env))))))
+                                        (funcall body* ,env))))))
                             (iter)))))
             (if envp
                 (lambda (env)
                   (lambda (&rest args)
                     (declare (dynamic-extent args))
                     (let ((new-env (make-environment env varnum)))
-                      (handle-arguments args new-env body*))))
+                      (handle-arguments args new-env))))
                 (lambda (env)
                   (lambda (&rest args)
                     (declare (dynamic-extent args))
                     ;;XXX VARNUM is too big--- need only lexicals
                     (with-dynamic-extent-environment (new-env env varnum)
-                      (handle-arguments args new-env body*)))))))))))
+                      (handle-arguments args new-env)))))))))))
 
 (defun context->native-environment (context)
   ;;FIXME
@@ -849,7 +852,7 @@
                                  (some (lambda (x) (maybe-closes-over-p context x vars))
                                        (mapcar #'cdr real-bindings))))
                        (new-context
-                         (context-add-env-lexicals context (list)))
+                         (make-lexical-context context))
                        lexical-values*
                        special-bindings*)
                   (loop for (var . value-form) in real-bindings
