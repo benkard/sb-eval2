@@ -58,8 +58,7 @@
 (defun make-env-lexical (name offset &optional (nesting -1))
   (make-instance 'env-lexical :name name :offset offset :nesting nesting))
 
-(defgeneric lexical-with-nesting (lexical nesting))
-(defmethod lexical-with-nesting ((lexical env-lexical) nesting)
+(defun lexical-with-nesting (lexical nesting)
   (make-env-lexical (lexical-name lexical) (lexical-offset lexical) nesting))
 
 (defun maybe-references-p/env (form vars env)
