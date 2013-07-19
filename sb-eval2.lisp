@@ -510,8 +510,8 @@
                                      ;; environment.
                                      (let ((dynvals (list))
                                            (dynvars (list)))
+                                       (incf i)
                                        (dolist (value values)
-                                         (incf i)
                                          (let ((varspec (pop my-varspecs)))
                                            (if (eq varspec :lexical)
                                                (progn
@@ -609,7 +609,8 @@
                                                        *new-env*)))
                                  (go aux)
                                rest
-                                 (assert (null my-default-values*))
+                                 (assert (null my-default-values*)
+                                         (my-default-values*))
                                  (when restp
                                    (push-args rest))
                                final-call
