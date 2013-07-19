@@ -488,14 +488,13 @@
                    ;; All this ELT and LENGTH stuff is not as
                    ;; inefficient as it looks.  SBCL transforms
                    ;; &rest into &more here.
-                   (let* ((restnum 0)
-                          (rest
+                   (let* ((rest
                             (when (or restp keyp)
                               (loop for i
                                     from (+ required-num optional-num)
                                     below (length args)
-                                    collect (elt args i)
-                                    do (incf restnum))))
+                                    collect (elt args i))))
+                          (restnum (- (length args) (+ required-num optional-num)))
                           (keys-checked-p nil)
                           (my-default-values* default-values*)
                           (my-keywords keywords)
@@ -574,9 +573,8 @@
                                         allowp
                                         (getf rest :allow-other-keys nil))
                               (loop for (k v) on rest by #'cddr
-                                    unless (member k
-                                                   (cons :allow-other-keys keywords)
-                                                   :test #'eq)
+                                    unless (or (eq k :allow-other-keys)
+                                               (member k keywords :test #'eq))
                                     do (error 'sb-int:simple-program-error
                                               :format-control "unknown &KEY argument: ~A"
                                               :format-arguments (list k)))
@@ -626,7 +624,6 @@
                   (lambda (env)
                     (lambda (&rest args)
                       (declare (dynamic-extent args))
-                      ;;XXX VARNUM is too big--- need only lexicals
                       (with-dynamic-extent-environment (*new-env* env varnum)
                         (declare (special *new-env*))
                         (apply #'handle-arguments args))))))))))))
