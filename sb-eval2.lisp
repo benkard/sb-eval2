@@ -496,21 +496,16 @@
                                (vari 0)
                                (i 0))
                           (declare (fixnum restnum argi vari i))
-                          (print varspecs)
-                          (print my-default-values*)
                           (labels
                               ((iter ()
-                                 (print "ITER")
                                  (flet ((push-args (&rest values)
                                           ;; Push VALUES onto the
                                           ;; environment.
-                                          (format t "~&PUSH-ARG ~D" vari)
                                           (let ((dynvals (list))
                                                 (dynvars (list)))
                                             (dolist (value values)
                                               (incf i)
                                               (let ((varspec (pop my-varspecs)))
-                                                (format t "~&VARSPEC = ~S" varspec)
                                                 (if (eq varspec :lexical)
                                                     (progn
                                                       (setf
@@ -518,7 +513,8 @@
                                                        value)
                                                       (incf vari))
                                                     (progn
-                                                      (assert (eq :special (car varspec))
+                                                      (assert (eq :special
+                                                                  (car varspec))
                                                               (varspec))
                                                       (push (cdr varspec) dynvars)
                                                       (push value dynvals)))))
@@ -530,20 +526,17 @@
                                    (declare (inline push-args))
                                    (tagbody
                                     positional
-                                      (print "; positional")
                                       (when (>= argi (length ,args))
                                         (go missing-optionals))
                                       (when (>= argi (the fixnum (+ required-num optional-num)))
                                         (go keys))
                                       (if (>= argi required-num)
                                         (progn
-                                          (print "POP DEFAULT")
                                           (pop my-default-values*)
                                           (push-args (elt ,args (incff argi)) t))
                                         (push-args (elt ,args (incff argi))))
                                       (go positional)
                                     missing-optionals
-                                      (print "; missing-optionals")
                                       (unless (>= argi required-num)
                                         (error 'sb-int:simple-program-error
                                                :format-control "invalid number of arguments: ~D"
