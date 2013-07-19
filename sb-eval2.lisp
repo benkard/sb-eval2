@@ -484,6 +484,7 @@
             (declare (special *new-env*))
             (flet
                 ((handle-arguments (&rest args)
+                   (declare (dynamic-extent args))
                    ;; All this ELT and LENGTH stuff is not as
                    ;; inefficient as it looks.  SBCL transforms
                    ;; &rest into &more here.
@@ -516,11 +517,9 @@
                               (dolist (value values)
                                 (let ((varspec (pop my-varspecs)))
                                   (if (eq varspec :lexical)
-                                      (progn
-                                        (setf
-                                         (environment-value *new-env* 0 vari)
-                                         value)
-                                        (incf vari))
+                                      (setf
+                                       (environment-value *new-env* 0 (incff vari))
+                                       value)
                                       (progn
                                         (assert (eq :special
                                                     (car varspec))
