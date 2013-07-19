@@ -196,6 +196,10 @@
                            for v in vars
                            collect (make-env-lexical v i))))
     new-context))
+(defun make-lexical-context (context)
+  (let ((new-context (make-context context)))
+    (setf (context-env-hop new-context) t)
+    new-context))
 (defun context-add-env-lexical! (context var)
   (with-slots (lexicals)
       context
@@ -454,7 +458,7 @@
                          (maybe-closes-over-p context `(progn ,@body) argvars)
                          (some (lambda (x) (maybe-closes-over-p context x argvars))
                                default-values)))
-               (new-context (make-context context))
+               (new-context (make-lexical-context context))
                (varspecs (list))
                (default-values*
                  (flet ((register-var (var)
