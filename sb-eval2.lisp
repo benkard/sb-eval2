@@ -498,31 +498,30 @@
                (body* (prepare-progn body new-context))
                (unbound (gensym)))
           (setq varspecs (nreverse varspecs))
-          (let ()
-            (flet
-                ((handle-arguments (new-env &rest args)
-                   ;;(declare (dynamic-extent args))
-                   ;; All this ELT and LENGTH stuff is not as
-                   ;; inefficient as it looks.  SBCL transforms
-                   ;; &rest into &more here.
-                   (nlet iter
-                         ((rest
-                           (when (or restp keyp)
-                             (loop for i
-                                   from (+ required-num optional-num)
-                                   below (length args)
-                                   collect (elt args i))))
-                          (restnum (- (length args) (+ required-num optional-num)))
-                          (keys-checked-p nil)
-                          (my-default-values* default-values*)
-                          (my-keywords keywords)
-                          (my-varspecs varspecs)
-                          (argi 0)  ;how many actual arguments have
-                                    ;been processed
-                          (vari 0)  ;how many lexical vars have been
-                                    ;bound
-                          (i 0))    ;how many formal arguments have
-                                    ;been processed
+          (flet
+              ((handle-arguments (new-env &rest args)
+                 ;;(declare (dynamic-extent args))
+                 ;; All this ELT and LENGTH stuff is not as
+                 ;; inefficient as it looks.  SBCL transforms
+                 ;; &rest into &more here.
+                 (nlet iter
+                     ((rest
+                       (when (or restp keyp)
+                         (loop for i
+                               from (+ required-num optional-num)
+                               below (length args)
+                               collect (elt args i))))
+                      (restnum (- (length args) (+ required-num optional-num)))
+                      (keys-checked-p nil)
+                      (my-default-values* default-values*)
+                      (my-keywords keywords)
+                      (my-varspecs varspecs)
+                      (argi 0)        ;how many actual arguments have
+                                      ;been processed
+                      (vari 0)        ;how many lexical vars have been
+                                      ;bound
+                      (i 0))          ;how many formal arguments have
+                                      ;been processed
                      (declare (fixnum restnum argi vari i))
                      (flet ((push-args (&rest values)
                               ;; Push VALUES onto the
@@ -628,7 +627,7 @@
                         final-call
                           (return
                             (funcall body* new-env)))))))
-              ;;(declare (inline handle-arguments))
+              ;;(declare (inline handle-arguments))  ;crashes the compiler! lp#1203260
               (if envp
                   (lambda (env)
                     (lambda (&rest args)
@@ -639,7 +638,7 @@
                     (lambda (&rest args)
                       (declare (dynamic-extent args))
                       (with-dynamic-extent-environment (new-env env varnum)
-                        (apply #'handle-arguments new-env args))))))))))))
+                        (apply #'handle-arguments new-env args)))))))))))
 
 (defun context->native-environment (context)
   (let ((functions
