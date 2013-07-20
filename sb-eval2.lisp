@@ -536,7 +536,7 @@
                                from (+ required-num optional-num)
                                below (length args)
                                collect (elt args i))))
-                      (restnum (- (length args) (+ required-num optional-num)))
+                      (restnum (max 0 (- (length args) (+ required-num optional-num))))
                       (keys-checked-p nil)
                       (my-default-values* default-values*)
                       (my-keywords keywords)
@@ -611,7 +611,7 @@
                             (go aux))
                           (unless (evenp restnum)
                             (error 'sb-int:simple-program-error
-                                   :format-control "odd number of keyword arguments: ~D"
+                                   :format-control "odd number of keyword arguments: ~S"
                                    :format-arguments (list rest)))
                           (when (>= i
                                     (the fixnum
