@@ -510,11 +510,10 @@
                (body* (prepare-progn body new-context))
                (unbound (gensym)))
           (setq varspecs (nreverse varspecs))
-          (let (*new-env*)
-            (declare (special *new-env*))
+          (let ()
             (flet
-                ((handle-arguments (&rest args)
-                   (declare (dynamic-extent args))
+                ((handle-arguments (new-env &rest args)
+                   ;;(declare (dynamic-extent args))
                    ;; All this ELT and LENGTH stuff is not as
                    ;; inefficient as it looks.  SBCL transforms
                    ;; &rest into &more here.
@@ -545,7 +544,7 @@
                                 (let ((varspec (pop my-varspecs)))
                                   (if (eq varspec :lexical)
                                       (setf
-                                       (environment-value *new-env* 0 (incff vari))
+                                       (environment-value new-env 0 (incff vari))
                                        value)
                                       (let ((var (cdr varspec)))
                                         (assert (eq :special
@@ -576,7 +575,7 @@
                             (go keys))
                           (let ((val* (pop my-default-values*)))
                             (push-args (funcall (the eval-closure val*)
-                                                *new-env*)
+                                                new-env)
                                        nil))
                           (go missing-optionals)
                         keys
@@ -627,7 +626,7 @@
                             (go rest))
                           (let ((val* (pop my-default-values*)))
                             (push-args (funcall (the eval-closure val*)
-                                                *new-env*)))
+                                                new-env)))
                           (go aux)
                         rest
                           (assert (null my-default-values*)
@@ -644,15 +643,13 @@
                   (lambda (env)
                     (lambda (&rest args)
                       (declare (dynamic-extent args))
-                      (let ((*new-env* (make-environment env varnum)))
-                        (declare (special *new-env*))
-                        (apply #'handle-arguments args))))
+                      (let ((new-env (make-environment env varnum)))
+                        (apply #'handle-arguments new-env args))))
                   (lambda (env)
                     (lambda (&rest args)
                       (declare (dynamic-extent args))
-                      (with-dynamic-extent-environment (*new-env* env varnum)
-                        (declare (special *new-env*))
-                        (apply #'handle-arguments args))))))))))))
+                      (with-dynamic-extent-environment (new-env env varnum)
+                        (apply #'handle-arguments new-env args))))))))))))
 
 (defun context->native-environment (context)
   (let ((functions
