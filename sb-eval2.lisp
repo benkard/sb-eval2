@@ -440,22 +440,10 @@
        (incf ,x ,num)
        ,old-x)))
 
-(sb-c:def-ir1-translator current-binding-pointer (() start next result)
-  (sb-c::ir1-convert
-   start next result
-   `(sb-sys:%primitive sb-c:current-binding-pointer)))
-
-(sb-c:def-ir1-translator unbind-to-here ((bs) start next result)
-  (sb-c::ir1-convert
-   start next result
-   `(sb-sys:%primitive sb-c:unbind-to-here ,bs)))
-
-(sb-c:def-ir1-translator bind ((var val) start next result)
-  (sb-c::ir1-convert
-   start next result
-   `(let ((val ,val))
-      (sb-c::about-to-modify-symbol-value ',var 'progv val t)
-      (sb-sys:%primitive sb-c:bind val ,var))))
+(defmacro nlet (loop-var bindings &body body)
+  `(labels ((,loop-var ,(mapcar #'first bindings)
+              ,@body))
+     (,loop-var ,@(mapcar #'second bindings))))
 
 (declaim (ftype (function * eval-closure) prepare-lambda))
 (defun prepare-lambda (lambda-form context)
@@ -517,18 +505,18 @@
                    ;; All this ELT and LENGTH stuff is not as
                    ;; inefficient as it looks.  SBCL transforms
                    ;; &rest into &more here.
-                   (let* ((rest
-                            (when (or restp keyp)
-                              (loop for i
-                                    from (+ required-num optional-num)
-                                    below (length args)
-                                    collect (elt args i))))
+                   (nlet iter
+                         ((rest
+                           (when (or restp keyp)
+                             (loop for i
+                                   from (+ required-num optional-num)
+                                   below (length args)
+                                   collect (elt args i))))
                           (restnum (- (length args) (+ required-num optional-num)))
                           (keys-checked-p nil)
                           (my-default-values* default-values*)
                           (my-keywords keywords)
                           (my-varspecs varspecs)
-                          (saved-binding-pointer (current-binding-pointer))
                           (argi 0)  ;how many actual arguments have
                                     ;been processed
                           (vari 0)  ;how many lexical vars have been
@@ -550,7 +538,11 @@
                                         (assert (eq :special
                                                     (car varspec))
                                                 (varspec))
-                                        (bind var value)))))))
+                                        (return-from iter
+                                          (progv (list var) (list value)
+                                            (iter rest restnum keys-checked-p
+                                                  my-default-values* my-keywords
+                                                  my-varspecs argi vari i)))))))))
                        (declare (inline push-args))
                        (prog ()
                         positional
@@ -635,9 +627,7 @@
                             (push-args rest))
                         final-call
                           (return
-                            (unwind-protect
-                                 (funcall body* new-env)
-                              (unbind-to-here saved-binding-pointer))))))))
+                            (funcall body* new-env)))))))
               ;;(declare (inline handle-arguments))
               (if envp
                   (lambda (env)
