@@ -991,7 +991,6 @@
                                            unless (eq spec :lexical)
                                            collect var))
                        (nlexicals    (list-length lexicals))
-                       (nvars        (list-length vars))
                        (new-context  (context-add-specials
                                       (context-add-env-lexicals context lexicals)
                                       specials))
