@@ -728,9 +728,9 @@
       (etypecase form
         (symbol
          (let ((macro? (context-find-symbol-macro context form)))
-                (if macro?
-                    (prepare-form macro? context)
-                    (prepare-ref form context))))
+           (if macro?
+               (prepare-form macro? context)
+               (prepare-ref form context))))
         (cons
          (case (first form)
            ((if)
@@ -777,7 +777,7 @@
                         for result =
                            (progn
                              (etypecase info
-                               (function  ;symbol macro setter
+                               (function ;symbol macro setter
                                 (funcall info env))
                                (lexical
                                 (setf (environment-value env
@@ -917,10 +917,10 @@
                                     do (setf (environment-value new-env 0 i)
                                              (funcall (the eval-closure val*) env))
                                        (incf i))
-                             (progv
-                                 srav-laiceps
-                                 slav-laiceps
-                               (funcall body* new-env)))))))))))
+                              (progv
+                                  srav-laiceps
+                                  slav-laiceps
+                                (funcall body* new-env)))))))))))
            ((let*)
             (destructuring-bind (bindings &rest exprs) (rest form)
               (with-parsed-body (body specials) exprs
@@ -932,7 +932,8 @@
                                       (val (if (listp binding-form) (second binding-form) nil)))
                                  `(let ((,var ,val))
                                     (declare (special
-                                              ,@(if (or (member var specials) (globally-special-p var))
+                                              ,@(if (or (member var specials)
+                                                        (globally-special-p var))
                                                     (list var)
                                                     nil)))
                                     ,(build-nested-let (rest bindings)))))))
