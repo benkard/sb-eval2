@@ -381,8 +381,10 @@
       (apply (the (or symbol function) (funcall (the eval-closure f) env))
              (mapcar (lambda (x) (funcall (the eval-closure x) env)) args*)))))
 
-(declaim (ftype (function (list context) (values eval-closure &rest nil)) prepare-progn))
-(defun prepare-progn (forms context)
+(declaim (ftype (function (list context &optional symbol)
+                          (values eval-closure &rest nil))
+                prepare-progn))
+(defun prepare-progn (forms context &optional (*mode* *mode*))
   (let ((body* (mapcar (lambda (form) (prepare-form form context)) forms)))
     (if (null body*)
         (prepare-nil)
@@ -724,8 +726,10 @@
           :format-control "Undefined variable: ~S"
           :format-arguments (list var))))
 
-(declaim (ftype (function (* context) eval-closure) prepare-form))
-(defun prepare-form (form context)
+(defvar *mode* :not-compile-time)
+
+(declaim (ftype (function (* context &optional symbol) eval-closure) prepare-form))
+(defun prepare-form (form context &optional (mode *mode*) &aux (*mode* :execute))
   ;;(declare (optimize speed (safety 0) (space 1) (debug 0)))
   ;;(print form)
   (values
@@ -737,7 +741,7 @@
         (symbol
          (let ((macro? (context-find-symbol-macro context form)))
            (if macro?
-               (prepare-form macro? context)
+               (prepare-form macro? context mode)
                (prepare-ref form context))))
         (cons
          (case (first form)
@@ -810,16 +814,34 @@
                   (catch tag
                     (funcall body* env))))))
            ((declare)
-            ;;FIXME
+            (warn "DECLARE in form context.")
             (prepare-nil))
            ((eval-when)
             (destructuring-bind ((&rest times) &body body) (rest form)
-              (if (or (member :load-toplevel times)
-                      (member :execute times)
-                      (member 'load times)
-                      (member 'eval times))
-                  (prepare-progn body context)
-                  (prepare-nil))))
+              (cond ((member mode '(:not-compile-time :compile-time-too))
+                     (let ((ct (or (member :compile-toplevel times)
+                                   (member 'cl:compile times)))
+                           (lt (or (member :load-toplevel times)
+                                   (member 'cl:load times)))
+                           (e  (or (member :execute times)
+                                   (member 'cl:eval times))))
+                       (cond ((and lt ct)
+                              (prepare-progn body context :compile-time-too))
+                             ((and lt e)
+                              (prepare-progn body context mode))
+                             (lt
+                              (prepare-progn body context :not-compile-time))
+                             (ct
+                              (prepare-progn body context))
+                             ((and e (eq mode :compile-time-too))
+                              (prepare-progn body context))
+                             (t
+                              (prepare-nil)))))
+                    ((or (member :execute times)
+                         (member 'cl:eval times))
+                     (prepare-progn body context))
+                    (t
+                     (prepare-nil)))))
            ((flet)
             (destructuring-bind (bindings &rest exprs) (rest form)
               (with-parsed-body (body specials) exprs
@@ -1014,7 +1036,7 @@
                                 do (setf (symbol-value (cdr spec)) (pop values)))
                         (funcall body* new-env))))))))
            ((progn)
-            (prepare-progn (rest form) context))
+            (prepare-progn (rest form) context mode))
            ((progv)
             (destructuring-bind (vals vars &body body) (rest form)
               (let ((vals* (prepare-form vals context))
@@ -1072,7 +1094,8 @@
                   (prepare-progn body
                                  (context-add-specials
                                   (context-add-symbol-macros context bindings)
-                                  specials))))))
+                                  specials)
+                                 mode)))))
            ((macrolet)
             (destructuring-bind (bindings &rest exprs) (rest form)
               (with-parsed-body (body specials) exprs
@@ -1087,7 +1110,8 @@
                   (prepare-progn body
                                  (context-add-specials
                                   (context-add-macros context bindings)
-                                  specials))))))
+                                  specials)
+                                 mode)))))
            ((go)
             (let* ((go-tag    (second form))
                    (catch-tag (context-find-go-tag context go-tag)))
