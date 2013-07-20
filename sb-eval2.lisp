@@ -523,9 +523,9 @@
                          (some (lambda (x) (maybe-closes-over-p context x argvars))
                                default-values)))
                (body-context (context-add-specials new-context specials))
-               (body* (if (and namep (symbolp name))
-                          (prepare-form `(block ,name ,@body) body-context)
-                          (prepare-progn body body-context)))
+               (body* (prepare-form
+                       `(block ,(sb-int:fun-name-block-name name) ,@body)
+                       body-context))
                (unbound (gensym)))
           (setq varspecs (nreverse varspecs))
           (flet
