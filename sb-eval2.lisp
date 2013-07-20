@@ -180,11 +180,24 @@
                                           until (atom current-form)
                                           collect current-form)))
                  (cons tag current-forms))))))
+(defun context-var-symbol-macro-p (context var)
+  (and (not (find var (context-specials context) :test #'equal))
+       (not (find var (context-lexicals context) :key #'lexical-name :test #'equal))
+       (or (find var (context-symbol-macros context) :key #'car :test #'equal)
+           (and (context-parent context)
+                (context-var-symbol-macro-p (context-parent context) var)))))
 (defun context-var-lexical-p (context var)
   (and (not (find var (context-specials context) :test #'equal))
+       (not (find var (context-symbol-macros context) :key #'car :test #'equal))
        (or (find var (context-lexicals context) :key #'lexical-name :test #'equal)
            (and (context-parent context)
                 (context-var-lexical-p (context-parent context) var)))))
+(defun context-var-special-p (context var)
+  (and (not (find var (context-lexicals context) :key #'lexical-name :test #'equal))
+       (not (find var (context-symbol-macros context) :key #'car :test #'equal))
+       (or (find var (context-specials context) :test #'equal)
+           (and (context-parent context)
+                (context-var-special-p (context-parent context) var)))))
 (defun context-add-env-lexicals (context vars)
   ;; open a new variable context
   (let ((new-context (make-context context)))
@@ -629,7 +642,6 @@
                         (apply #'handle-arguments args))))))))))))
 
 (defun context->native-environment (context)
-  ;;FIXME
   (let ((functions
           (loop for (name . expander) in (context-collect context 'context-macros)
                 collect `(,name . (sb-c::macro . ,expander))))
@@ -638,13 +650,31 @@
                 collect `(,name . (sb-c::macro . form)))))
     (sb-c::internal-make-lexenv functions vars nil nil nil nil nil nil nil nil nil)))
 
+#+(or)
 (defun native-environment->context (lexenv)
-  ;;FIXME
-  (declare (ignore lexenv))
-  (make-null-context))
+  (with-slots (functions vars) lexenv
+    (let ((macros%
+            (loop for (name . functional) in vars
+                  when (eq (car functional) 'sb-c::macro)
+                  collect `(,name . ,(cdr functional))))
+          (symbol-macros%
+            (loop for (name . form) in functions
+                  when (eq (car form) 'sb-c::macro)
+                  collect `(,name . ,(cdr form)))))
+      (with-slots (macros symbol-macros)
+          (make-context nil)
+        (setq macros macros%)
+        (setq symbol-macros symbol-macros%)))))
+
 
 (defun globally-special-p (var)
   (eq :special (sb-int:info :variable :kind var)))
+
+(defun assume-special (context var)
+  (unless (context-var-special-p context var)
+    (warn 'simple-warning
+          :format-control "Undefined variable: ~S"
+          :format-arguments (list var))))
 
 (declaim (ftype (function (* &optional context) eval-closure) prepare-form))
 (defun prepare-form (form &optional (context (make-null-context)))
@@ -689,23 +719,32 @@
               (let ((bindings
                       (loop for (var valform) on binding-forms by #'cddr
                             collect var
-                            collect (context-find-lexical context var)
+                            collect
+                               (cond ((context-var-symbol-macro-p context var)
+                                      (let ((form
+                                              (context-find-symbol-macro context var)))
+                                        (prepare-form `(lambda (v) (setf ,form v))
+                                                      context)))
+                                     ((context-var-lexical-p context var)
+                                      (context-find-lexical context var))
+                                     (t
+                                      (assume-special context var)
+                                      :special))
                             collect (prepare-form valform context))))
                 (lambda (env)
-                  (loop for (var lexical? val*) on bindings by #'cdddr
+                  (loop for (var info val*) on bindings by #'cdddr
                         for value = (funcall (the eval-closure val*) env)
                         for result =
                            (progn
-                             (check-type var symbol)
-                             (etypecase lexical?  ; XXX could lift the
-                                                  ; case distinction
-                                                  ; out of the lambda
-                               (env-lexical
+                             (etypecase info
+                               (function  ;symbol macro setter
+                                (funcall (funcall info env) value))
+                               (lexical
                                 (setf (environment-value env
-                                                         (lexical-nesting lexical?)
-                                                         (lexical-offset lexical?))
+                                                         (lexical-nesting info)
+                                                         (lexical-offset info))
                                       value))
-                               (null
+                               (keyword
                                 (setf (symbol-value var) value))))
                         finally (return result))))))
            ((catch)
@@ -921,22 +960,40 @@
                     (funcall body* env))))))
            ((multiple-value-setq)
             (destructuring-bind (vars values-form) (rest form)
-              (let ((values-form* (prepare-form values-form context))
-                    (lexicals     (mapcar (lambda (v)
-                                            (context-find-lexical context v))
-                                          vars)))
+              (let ((values-form*
+                      (prepare-form values-form context))
+                    (lexicals
+                      (mapcar (lambda (v)
+                                (context-find-lexical context v))
+                              vars))
+                    (symbol-macro-setters*
+                      (mapcar (lambda (var)
+                                (when (context-var-symbol-macro-p context var)
+                                  (let ((form
+                                          (context-find-symbol-macro context var)))
+                                    (prepare-form `(lambda (v) (setf ,form v))
+                                                  context))))
+                              vars)))
                 (lambda (env)
-                  (let* ((values        (multiple-value-list (funcall values-form* env)))
-                         (primary-value (first values)))
+                  (let* ((values (multiple-value-list (funcall values-form* env)))
+                         (primary-value (first values))
+                         (my-symbol-macro-setters* symbol-macro-setters*))
                     (loop for lexical? in lexicals
-                          for value in values
+                          for value = (pop values)
                           for var in vars
-                          do (if lexical?
-                                 (setf (environment-value env
-                                                          (lexical-nesting lexical?)
-                                                          (lexical-offset lexical?))
-                                       value)
-                                 (setf (symbol-value var) value)))
+                          do (cond
+                               ((context-var-lexical-p context var)
+                                (setf (environment-value env
+                                                         (lexical-nesting lexical?)
+                                                         (lexical-offset lexical?))
+                                      value))
+                               ((context-var-symbol-macro-p context var)
+                                (funcall (funcall (pop my-symbol-macro-setters*)
+                                                  env)
+                                         value))
+                               (t
+                                (assume-special context var)
+                                (setf (symbol-value var) value))))
                     primary-value)))))
            ((multiple-value-bind)
             ;; FIXME: SPECIAL declarations!
@@ -1003,8 +1060,6 @@
                                   (context-add-symbol-macros context bindings)
                                   specials))))))
            ((macrolet)
-            ;; FIXME: This doesn't actually work because we disregard
-            ;; the lambda list when calling the macro.
             (destructuring-bind (bindings &rest exprs) (rest form)
               (with-parsed-body (body specials) exprs
                 (let ((bindings (mapcar (lambda (form)
