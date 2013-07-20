@@ -1124,6 +1124,8 @@
                                             form
                                             (context->native-environment context))
                                    context)))
+                  ((local-function-p context f)
+                   (prepare-local-call f args context))
                   (global-macro?
                    (prepare-form (funcall global-macro? form (context->native-environment context)) context))
                   ((and (listp f)
@@ -1131,9 +1133,7 @@
                    (let ((lambda-fn (prepare-lambda (rest f) context)))
                      (prepare-direct-call lambda-fn args context)))
                   (t
-                   (if (local-function-p context f)
-                       (prepare-local-call f args context)
-                       (prepare-global-call f args context))))))))))))
+                   (prepare-global-call f args context)))))))))))
    t))
 
 (defun eval (form)
