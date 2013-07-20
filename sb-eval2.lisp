@@ -430,9 +430,10 @@
                                                 name
                                                 'macrolet
                                                 :environment env)))
-      (prepare-form `(lambda (,whole ,env)
-                       ,body-form)
-                    context))))
+      (prepare-lambda `((,whole ,env) ,body-form)
+                      context
+                      ;;:name name
+                      ))))
 
 (defmacro incff (x &optional (num 1))
   (let ((old-x (gensym)))
@@ -446,7 +447,7 @@
      (,loop-var ,@(mapcar #'second bindings))))
 
 (declaim (ftype (function * eval-closure) prepare-lambda))
-(defun prepare-lambda (lambda-form context)
+(defun prepare-lambda (lambda-form context &key (name nil namep))
   (destructuring-bind (lambda-list &rest exprs) lambda-form
     (with-parsed-body (body specials) exprs
       (multiple-value-bind (required optional restp rest keyp keys allowp auxp aux
@@ -495,8 +496,10 @@
                          (maybe-closes-over-p context `(progn ,@body) argvars)
                          (some (lambda (x) (maybe-closes-over-p context x argvars))
                                default-values)))
-               (body* (prepare-progn body
-                                     (context-add-specials new-context specials)))
+               (body-context (context-add-specials new-context specials))
+               (body* (if (and namep (symbolp name))
+                          (prepare-form `(block ,name ,@body) body-context)
+                          (prepare-progn body body-context)))
                (unbound (gensym)))
           (setq varspecs (nreverse varspecs))
           (flet
@@ -781,7 +784,9 @@
                 (let* ((bindings* (mapcar (lambda (form)
                                             (if (listp form)
                                                 (cons (first form)
-                                                      (prepare-lambda (rest form) context))
+                                                      (prepare-lambda (rest form)
+                                                                      context
+                                                                      :name (first form)))
                                                 (cons form (prepare-nil))))
                                           bindings))
                        (new-context
@@ -805,7 +810,7 @@
                        (bindings* (mapcar (lambda (form)
                                             (if (listp form)
                                                 (cons (first form)
-                                                      (prepare-lambda (rest form) new-context))
+                                                      (prepare-lambda (rest form) new-context :name (first form)))
                                                 (cons form (prepare-nil))))
                                           bindings))
                        (functions (mapcar #'cdr bindings*))
