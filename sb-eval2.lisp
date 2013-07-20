@@ -388,15 +388,26 @@
               (funcall (the eval-closure form*) env))
             (funcall (the eval-closure last-form*) env))))))
 
-(defun lambda-binding-vars (entry)
-  (etypecase entry
-    (cons   (list (etypecase (first entry)
-                    (cons   (second (first entry)))
-                    (symbol (first entry)))
-                  (if (cddr entry)
-                      (third entry)
-                      (gensym))))
-    (symbol (list entry (gensym)))))
+(defun lambda-binding-vars (entry kind)
+  (check-type kind (member :aux :optional :key :required))
+  (ecase kind
+    ((:key :optional)
+     (etypecase entry
+       (cons   (list (etypecase (first entry)
+                       (cons   (second (first entry)))
+                       (symbol (first entry)))
+                     (if (cddr entry)
+                         (third entry)
+                         (gensym))))
+       (symbol (list entry (gensym)))))
+    ((:required)
+     (etypecase entry
+       (cons   (list (first entry)))
+       (symbol entry)))
+    ((:aux)
+     (etypecase entry
+       (cons   (list (first entry)))
+       (symbol entry)))))
 
 (defun lambda-binding-main-var (entry)
   (etypecase entry
@@ -465,10 +476,10 @@
           (error "The interpreter does not support the lambda-list keyword ~S"
                  'sb-int:&more))
         (let* ((argvars (append required
-                                (mapcan #'lambda-binding-vars optional)
+                                (mapcan (lambda (x) (lambda-binding-vars x :optional)) optional)
                                 (and restp (list rest))
-                                (mapcan #'lambda-binding-vars keys)
-                                (mapcan #'lambda-simple-binding-vars aux)))
+                                (mapcan (lambda (x) (lambda-binding-vars x :key)) keys)
+                                (mapcan (lambda (x) (lambda-binding-vars x :aux)) aux)))
                (keywords (mapcar #'lambda-key keys))
                (required-num (length required))
                (optional-num (length optional))
@@ -492,16 +503,16 @@
                                 (push :lexical varspecs)
                                 (incf (the fixnum varnum))))))
                    (mapc #'register-var required)
-                   (flet ((process-bindings (bindings)
+                   (flet ((process-bindings (bindings kind)
                             (loop for binding in bindings
                                   for default-value = (lambda-binding-default binding)
-                                  for vars = (lambda-binding-vars binding)
+                                  for vars = (lambda-binding-vars binding kind)
                                   collect (prepare-form default-value new-context)
                                   do (mapc #'register-var vars))))
-                     (append (process-bindings optional)
+                     (append (process-bindings optional :optional)
                              (progn (when restp (register-var rest)) '())
-                             (process-bindings keys)
-                             (process-bindings aux)))))
+                             (process-bindings keys :key)
+                             (process-bindings aux :aux)))))
                (envp (or (> varnum +stack-max+)
                          (maybe-closes-over-p context `(progn ,@body) argvars)
                          (some (lambda (x) (maybe-closes-over-p context x argvars))
