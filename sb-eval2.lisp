@@ -1024,7 +1024,17 @@
             (destructuring-bind (bindings &rest exprs) (rest form)
               (with-parsed-body (body specials) exprs
                 (let ((bindings (mapcar (lambda (form)
-                                          (cons (first form) (second form)))
+                                          (destructuring-bind (var macro-form) form
+                                            (when (or (globally-special-p var)
+                                                      (member var specials))
+                                              (error 'sb-int:simple-program-error
+                                                     :format-control "Attempt to bind a special variable with SYMBOL-MACROLET: ~S"
+                                                     :format-arguments (list var)))
+                                            (when (constantp var)
+                                              (error 'sb-int:simple-program-error
+                                                     :format-control "Attempt to bind a special variable with SYMBOL-MACROLET: ~S"
+                                                     :format-arguments (list var)))
+                                            (cons var macro-form)))
                                         bindings)))
                   (prepare-progn body
                                  (context-add-specials
