@@ -278,9 +278,11 @@
           (env-lexical
            (lambda (env)
              (environment-value env nesting offset)))))
-      (lambda (env)
-        (declare (ignore env))
-        (symbol-value var))))
+      (progn
+        (assume-special context var)
+        (lambda (env)
+          (declare (ignore env))
+          (symbol-value var)))))
 
 
 (defun body-decls&forms (exprs)
@@ -540,7 +542,7 @@
           (setq varspecs (nreverse varspecs))
           (flet
               ((handle-arguments (new-env &rest args)
-                 ;;(declare (dynamic-extent args))
+                 (declare (dynamic-extent args))
                  ;; All this ELT and LENGTH stuff is not as
                  ;; inefficient as it looks.  SBCL transforms
                  ;; &rest into &more here.
@@ -787,17 +789,16 @@
                   (loop for (var info val*) on bindings by #'cdddr
                         for value = (funcall (the eval-closure val*) env)
                         for result =
-                           (progn
-                             (etypecase info
-                               (function ;symbol macro setter
-                                (funcall info env))
-                               (lexical
-                                (setf (environment-value env
-                                                         (lexical-nesting info)
-                                                         (lexical-offset info))
-                                      value))
-                               (keyword
-                                (setf (symbol-value var) value))))
+                           (etypecase info
+                             (function ;symbol macro setter
+                              (funcall info env))
+                             (lexical
+                              (setf (environment-value env
+                                                       (lexical-nesting info)
+                                                       (lexical-offset info))
+                                    value))
+                             (keyword
+                              (setf (symbol-value var) value)))
                         finally (return result))))))
            ((catch)
             (destructuring-bind (tag &body body) (rest form)
