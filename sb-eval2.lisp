@@ -468,6 +468,12 @@
               ,@body))
      (,loop-var ,@(mapcar #'second bindings))))
 
+(defmacro dnlet (loop-var bindings &body body)
+  `(labels ((,loop-var ,(mapcar #'first bindings)
+              ,@body))
+     (declare (dynamic-extent #',loop-var))
+     (,loop-var ,@(mapcar #'second bindings))))
+
 (declaim (ftype (function * eval-closure) prepare-lambda))
 (defun prepare-lambda (lambda-form context &key (name nil namep))
   (destructuring-bind (lambda-list &rest exprs) lambda-form
@@ -536,7 +542,7 @@
                  ;; All this ELT and LENGTH stuff is not as
                  ;; inefficient as it looks.  SBCL transforms
                  ;; &rest into &more here.
-                 (nlet iter
+                 (dnlet iter
                      ((rest
                        (when (or restp keyp)
                          (loop for i
