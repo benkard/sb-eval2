@@ -725,7 +725,7 @@
                                (cond ((context-var-symbol-macro-p context var)
                                       (let ((form
                                               (context-find-symbol-macro context var)))
-                                        (prepare-form `(lambda (v) (setf ,form v))
+                                        (prepare-form `(setf ,form ,valform)
                                                       context)))
                                      ((context-var-lexical-p context var)
                                       (context-find-lexical context var))
@@ -740,7 +740,7 @@
                            (progn
                              (etypecase info
                                (function  ;symbol macro setter
-                                (funcall (funcall info env) value))
+                                (funcall info env))
                                (lexical
                                 (setf (environment-value env
                                                          (lexical-nesting info)
@@ -926,41 +926,9 @@
                     (funcall body* env))))))
            ((multiple-value-setq)
             (destructuring-bind (vars values-form) (rest form)
-              (let ((values-form*
-                      (prepare-form values-form context))
-                    (lexicals
-                      (mapcar (lambda (v)
-                                (context-find-lexical context v))
-                              vars))
-                    (symbol-macro-setters*
-                      (mapcar (lambda (var)
-                                (when (context-var-symbol-macro-p context var)
-                                  (let ((form
-                                          (context-find-symbol-macro context var)))
-                                    (prepare-form `(lambda (v) (setf ,form v))
-                                                  context))))
-                              vars)))
-                (lambda (env)
-                  (let* ((values (multiple-value-list (funcall values-form* env)))
-                         (primary-value (first values))
-                         (my-symbol-macro-setters* symbol-macro-setters*))
-                    (loop for lexical? in lexicals
-                          for value = (pop values)
-                          for var in vars
-                          do (cond
-                               ((context-var-lexical-p context var)
-                                (setf (environment-value env
-                                                         (lexical-nesting lexical?)
-                                                         (lexical-offset lexical?))
-                                      value))
-                               ((context-var-symbol-macro-p context var)
-                                (funcall (funcall (pop my-symbol-macro-setters*)
-                                                  env)
-                                         value))
-                               (t
-                                (assume-special context var)
-                                (setf (symbol-value var) value))))
-                    primary-value)))))
+              (if vars
+                  (prepare-form `(values (setf (values ,@vars) ,values-form)) context)
+                  (prepare-form `(values ,values-form) context))))
            ((multiple-value-bind)
             ;; FIXME: SPECIAL declarations!
             (destructuring-bind (vars value-form &body exprs) (rest form)
