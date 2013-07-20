@@ -621,7 +621,7 @@
                                               :format-arguments (list k)))
                               (setq keys-checked-p t))
                             (go aux))
-                          (let* ((key  (the keyword (pop my-keywords)))
+                          (let* ((key  (the symbol (pop my-keywords)))
                                  (val* (pop my-default-values*))
                                  (x    (getf rest key unbound)))
                             (if (eq unbound x)
