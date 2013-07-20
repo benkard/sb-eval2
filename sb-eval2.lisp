@@ -524,7 +524,9 @@
                                default-values)))
                (body-context (context-add-specials new-context specials))
                (body* (prepare-form
-                       `(block ,(sb-int:fun-name-block-name name) ,@body)
+                       (if namep
+                           `(block ,(sb-int:fun-name-block-name name) ,@body)
+                           `(progn ,@body))
                        body-context))
                (unbound (gensym)))
           (setq varspecs (nreverse varspecs))
