@@ -152,8 +152,14 @@
         (and parent (context-find-symbol-macro parent symmac)))))
 (defun context-find-macro (context mac)
   (let ((parent (context-parent context)))
-    (or (cdr (assoc (the (or symbol list) mac) (context-macros context) :test #'equal))
-        (and parent (context-find-macro parent mac)))))
+    (and (not (member `(function ,mac)
+                      (context-lexicals context)
+                      :test #'equal
+                      :key #'lexical-name))
+         (or (cdr (assoc (the (or symbol list) mac)
+                         (context-macros context)
+                         :test #'equal))
+             (and parent (context-find-macro parent mac))))))
 (defun context-add-symbol-macros (context bindings)
   (let ((new-context (make-context context)))
     (with-slots (symbol-macros)
@@ -460,9 +466,9 @@
                  'sb-int:&more))
         (let* ((argvars (append required
                                 (mapcan #'lambda-binding-vars optional)
+                                (and restp (list rest))
                                 (mapcan #'lambda-binding-vars keys)
-                                (mapcan #'lambda-simple-binding-vars aux)
-                                (and restp (list rest))))
+                                (mapcan #'lambda-simple-binding-vars aux)))
                (keywords (mapcar #'lambda-key keys))
                (required-num (length required))
                (optional-num (length optional))
@@ -486,12 +492,16 @@
                                 (push :lexical varspecs)
                                 (incf (the fixnum varnum))))))
                    (mapc #'register-var required)
-                   (loop for default-value in default-values
-                         for binding in (append optional keys aux)
-                         for vars = (lambda-binding-vars binding)
-                         collect (prepare-form default-value new-context)
-                         do (mapc #'register-var vars)
-                         finally (when restp (register-var rest)))))
+                   (flet ((process-bindings (bindings)
+                            (loop for binding in bindings
+                                  for default-value = (lambda-binding-default binding)
+                                  for vars = (lambda-binding-vars binding)
+                                  collect (prepare-form default-value new-context)
+                                  do (mapc #'register-var vars))))
+                     (append (process-bindings optional)
+                             (progn (when restp (register-var rest)) '())
+                             (process-bindings keys)
+                             (process-bindings aux)))))
                (envp (or (> varnum +stack-max+)
                          (maybe-closes-over-p context `(progn ,@body) argvars)
                          (some (lambda (x) (maybe-closes-over-p context x argvars))
@@ -553,7 +563,7 @@
                             (go missing-optionals))
                           (when (>= argi (the fixnum
                                               (+ required-num optional-num)))
-                            (go keys))
+                            (go rest))
                           (if (>= argi required-num)
                               (progn
                                 (pop my-default-values*)
@@ -567,12 +577,20 @@
                                    :format-arguments (list (length args))))
                           (when (>= i (the fixnum (+ required-num
                                                      optional-num)))
-                            (go keys))
+                            (go rest))
                           (let ((val* (pop my-default-values*)))
                             (push-args (funcall (the eval-closure val*)
                                                 new-env)
                                        nil))
                           (go missing-optionals)
+                        rest
+                          (when (>= i (the fixnum
+                                           (+ (if restp 1 0)
+                                              (the fixnum
+                                                   (+ required-num optional-num)))))
+                            (go keys))
+                          (when restp
+                            (push-args rest))
                         keys
                           (unless keyp
                             (unless (or restp (= argi (length args)))
@@ -586,10 +604,12 @@
                                    :format-arguments (list rest)))
                           (when (>= i
                                     (the fixnum
-                                         (+ required-num
+                                         (+ (if restp 1 0)
                                             (the fixnum
-                                                 (+ optional-num
-                                                    key-num)))))
+                                                 (+ required-num
+                                                    (the fixnum
+                                                         (+ optional-num
+                                                            key-num)))))))
                             (unless (or keys-checked-p
                                         allowp
                                         (getf rest :allow-other-keys nil))
@@ -613,31 +633,21 @@
                           (go keys)
                         aux
                           (when (>= i
-                                    (the fixnum
-                                         (+ required-num
-                                            (the fixnum
-                                                 (+ optional-num
-                                                    key-num))
-                                            aux-num)))
-                            (go rest))
+                                    (+ (if restp 1 0)
+                                       (the fixnum
+                                            (+ required-num
+                                               (the fixnum
+                                                    (+ optional-num
+                                                       key-num))
+                                               aux-num))))
+                            (go final-call))
                           (let ((val* (pop my-default-values*)))
                             (push-args (funcall (the eval-closure val*)
                                                 new-env)))
                           (go aux)
-                        rest
+                        final-call
                           (assert (null my-default-values*)
                                   (my-default-values*))
-                          (when (>= i (the fixnum
-                                           (1+ (the fixnum
-                                                    (+ required-num
-                                                       (the fixnum
-                                                            (+ optional-num
-                                                               key-num))
-                                                       aux-num)))))
-                            (go final-call))
-                          (when restp
-                            (push-args rest))
-                        final-call
                           (return
                             (funcall body* new-env)))))))
               ;;(declare (inline handle-arguments))  ;crashes the compiler! lp#1203260
