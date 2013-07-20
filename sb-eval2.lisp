@@ -627,6 +627,14 @@
                         rest
                           (assert (null my-default-values*)
                                   (my-default-values*))
+                          (when (>= i (the fixnum
+                                           (1+ (the fixnum
+                                                    (+ required-num
+                                                       (the fixnum
+                                                            (+ optional-num
+                                                               key-num))
+                                                       aux-num)))))
+                            (go final-call))
                           (when restp
                             (push-args rest))
                         final-call
