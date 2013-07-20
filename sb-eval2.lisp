@@ -973,18 +973,38 @@
             ;; FIXME: SPECIAL declarations!
             (destructuring-bind (vars value-form &body exprs) (rest form)
               (with-parsed-body (body specials) exprs
-                (let* ((value-form* (prepare-form value-form context))
-                       (n           (length (the list vars)))
-                       (new-context (context-add-specials
-                                     (context-add-env-lexicals context vars)
-                                     specials))
-                       (body*       (prepare-progn body new-context)))
+                (let* ((value-form*  (prepare-form value-form context))
+                       (varspecs     (loop for var in vars
+                                           collect (if (or (member var specials)
+                                                           (globally-special-p var))
+                                                       (cons :special var)
+                                                       :lexical)))
+                       (lexicals     (loop for var in vars
+                                           for spec in varspecs
+                                           when (eq spec :lexical)
+                                           collect var))
+                       (our-specials (loop for var in vars
+                                           for spec in varspecs
+                                           unless (eq spec :lexical)
+                                           collect var))
+                       (nlexicals    (list-length lexicals))
+                       (nvars        (list-length vars))
+                       (new-context  (context-add-specials
+                                      (context-add-env-lexicals context lexicals)
+                                      specials))
+                       (body*        (prepare-progn body new-context)))
                   (lambda (env)
-                    (let* ((new-env (make-environment env n))
+                    (let* ((new-env (make-environment env nlexicals))
                            (values  (multiple-value-list (funcall value-form* env))))
-                      (dotimes (i n)
-                        (setf (environment-value new-env 0 i) (pop values)))
-                      (funcall body* new-env)))))))
+                      (progv our-specials '()
+                        (loop with i = 0
+                              for spec in varspecs
+                              when (eq spec :lexical)
+                                do (setf (environment-value new-env 0 i) (pop values))
+                                   (incf i)
+                              else
+                                do (setf (symbol-value (cdr spec)) (pop values)))
+                        (funcall body* new-env))))))))
            ((progn)
             (prepare-progn (rest form) context))
            ((progv)
