@@ -289,7 +289,7 @@
                             (eq 'declare (first (first exprs))))
                  for expr = (pop exprs)
                  collect expr))
-         (decls (mapcan #'rest decl-exprs)))
+         (decls (reduce #'append (mapcar #'rest decl-exprs))))
     (values decls exprs)))
 
 (defun decl-specials (declaration)
