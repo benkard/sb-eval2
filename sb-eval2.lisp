@@ -603,7 +603,8 @@
                                  (x    (getf rest key unbound)))
                             (if (eq unbound x)
                                 (progn
-                                  (push-args (the eval-closure val*) nil))
+                                  (push-args (funcall (the eval-closure val*) new-env)
+                                             nil))
                                 (progn
                                   (push-args x t))))
                           (go keys)
