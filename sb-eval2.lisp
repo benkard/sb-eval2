@@ -495,7 +495,8 @@
                          (maybe-closes-over-p context `(progn ,@body) argvars)
                          (some (lambda (x) (maybe-closes-over-p context x argvars))
                                default-values)))
-               (body* (prepare-progn body new-context))
+               (body* (prepare-progn body
+                                     (context-add-specials new-context specials)))
                (unbound (gensym)))
           (setq varspecs (nreverse varspecs))
           (flet
@@ -843,7 +844,10 @@
                                  else
                                  collect (cons nil val*)
                                  and do (context-add-env-lexical! new-context var)))
-                         (body* (prepare-progn body new-context)))
+                         (body* (prepare-progn body
+                                               (context-add-specials
+                                                new-context
+                                                specials))))
                     (if envp
                         (lambda (env)
                           (let ((new-env (make-environment env varnum))
@@ -963,7 +967,9 @@
               (with-parsed-body (body specials) exprs
                 (let* ((value-form* (prepare-form value-form context))
                        (n           (length (the list vars)))
-                       (new-context (context-add-env-lexicals context vars))
+                       (new-context (context-add-specials
+                                     (context-add-env-lexicals context vars)
+                                     specials))
                        (body*       (prepare-progn body new-context)))
                   (lambda (env)
                     (let* ((new-env (make-environment env n))
