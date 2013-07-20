@@ -682,8 +682,8 @@
           :format-control "Undefined variable: ~S"
           :format-arguments (list var))))
 
-(declaim (ftype (function (* &optional context) eval-closure) prepare-form))
-(defun prepare-form (form &optional (context (make-null-context)))
+(declaim (ftype (function (* context) eval-closure) prepare-form))
+(defun prepare-form (form context)
   ;;(declare (optimize speed (safety 0) (space 1) (debug 0)))
   ;;(print form)
   (values
@@ -906,7 +906,7 @@
            ((load-time-value)
             (let ((load-form (cadr form)))
               ;; FIXME
-              (prepare-form load-form)))
+              (prepare-form load-form context)))
            ((locally)
             (destructuring-bind (&rest exprs) (rest form)
               (with-parsed-body (body specials) exprs
@@ -1073,7 +1073,7 @@
    t))
 
 (defun eval (form)
-  (funcall (prepare-form form) (make-null-environment)))
+  (funcall (prepare-form form (make-null-context)) (make-null-environment)))
 
 
 (defun load (filename)
