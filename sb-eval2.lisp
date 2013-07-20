@@ -148,8 +148,13 @@
         (and parent (context-find-go-tag parent go-tag)))))
 (defun context-find-symbol-macro (context symmac)
   (let ((parent (context-parent context)))
-    (or (cdr (assoc (the symbol symmac) (context-symbol-macros context)))
-        (and parent (context-find-symbol-macro parent symmac)))))
+    (and (not (member symmac
+                      (context-lexicals context)
+                      :test #'equal
+                      :key #'lexical-name))
+         (not (member symmac (context-specials context) :test #'equal))
+         (or (cdr (assoc (the symbol symmac) (context-symbol-macros context)))
+             (and parent (context-find-symbol-macro parent symmac))))))
 (defun context-find-macro (context mac)
   (let ((parent (context-parent context)))
     (and (not (member `(function ,mac)
