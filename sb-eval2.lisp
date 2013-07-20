@@ -1,7 +1,7 @@
 (defpackage "SB-EVAL2"
   (:use "COMMON-LISP")
-  (:shadow "EVAL" "LOAD")
-  (:export "EVAL" "LOAD"))
+  (:shadow "EVAL" "LOAD" "INSTALL")
+  (:export "EVAL" "LOAD" "INSTALL"))
 
 (in-package "SB-EVAL2")
 
@@ -1169,8 +1169,12 @@
    t))
 
 (defun eval (form)
-  (funcall (prepare-form form (make-null-context)) (make-null-environment)))
+  (funcall (prepare-form form (make-null-context) :execute)
+           (make-null-environment)))
 
+(defun eval-tlf (form)
+  (funcall (prepare-form form (make-null-context) :not-compile-time)
+           (make-null-environment)))
 
 (defun load (filename)
   ;;FIXME: set :LOAD-TOPLEVEL time.
@@ -1178,8 +1182,29 @@
     (with-open-file (in filename)
       (loop for form = (read in nil eof nil)
             until (eq form eof)
-            do (eval form)))))
+            do (eval-tlf form)))))
 
+(defun install ()
+  (sb-ext:without-package-locks
+    (defun sb-impl::eval-in-lexenv (exp lexenv)
+      (ccase sb-ext:*evaluator-mode*
+        #+(or)
+        ((:interpret)
+         (sb-impl::simple-eval-in-lexenv exp lexenv))
+        ((:interpret)
+         (funcall (sb-eval2::prepare-form exp
+                                          (sb-eval2::native-environment->context lexenv)
+                                          (if sb-impl::*eval-tlf-index*
+                                              :not-compile-time
+                                              :execute))
+                  (sb-eval2::make-null-environment)))
+        ((:compile)
+         (sb-eval:eval-in-native-environment exp lexenv))))))
+
+;; * enable with:
+;;
+;; (sb-eval2:install)
+;; (setq sb-ext:*evaluator-mode* :interpret)
 
 #+(or)
 (funcall (prepare-form '(funcall
