@@ -758,7 +758,7 @@
                     (prepare-lambda (rest fun-form) context))
                    ((sb-int:named-lambda)
                     (prepare-lambda (cddr fun-form) context))
-                   ((setf)
+                   ((setf sb-pcl::slot-accessor)
                     (prepare-function-ref fun-form context)))))))
            ((lambda)
             (prepare-lambda (rest form) context))
