@@ -691,7 +691,7 @@
         (symbol
          (let ((macro? (context-find-symbol-macro context form)))
                 (if macro?
-                    (prepare-form macro?)
+                    (prepare-form macro? context)
                     (prepare-ref form context))))
         (cons
          (case (first form)
