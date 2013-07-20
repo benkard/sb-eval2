@@ -878,60 +878,21 @@
                                  slav-laiceps
                                (funcall body* new-env)))))))))))
            ((let*)
-            ;; FIXME: SPECIAL declarations!
             (destructuring-bind (bindings &rest exprs) (rest form)
               (with-parsed-body (body specials) exprs
-                (let* ((real-bindings (mapcar (lambda (form)
-                                                (if (listp form)
-                                                    (cons (first form) (second form))
-                                                    (cons form nil)))
-                                              bindings))
-                       (vars (mapcar #'car real-bindings))
-                       (varnum (length vars))
-                       (envp (or (> varnum +stack-max+)
-                                 (maybe-closes-over-p context `(progn ,@body) vars)
-                                 (some (lambda (x) (maybe-closes-over-p context x vars))
-                                       (mapcar #'cdr real-bindings))))
-                       (new-context
-                         (make-lexical-context context))
-                       lexical-values*
-                       special-bindings*)
-                  (loop for (var . value-form) in real-bindings
-                        for val* = (prepare-form value-form new-context)
-                        if (globally-special-p var)
-                        collect (cons var val*) into specials 
-                        else
-                        collect val* into lexicals
-                        and do (context-add-env-lexical! new-context var)
-                        finally
-                           (setq lexical-values* lexicals
-                                 special-bindings* specials))
-                  (let ((body* (prepare-progn body new-context))
-                        (special-vars  (mapcar #'car special-bindings*))
-                        (special-vals* (mapcar #'cdr special-bindings*)))
-                    (if envp
-                        (lambda (env)
-                          (let ((new-env (make-environment env varnum)))
-                            (loop for i from 0 below varnum
-                                  for val* in lexical-values*
-                                  do (setf (environment-value new-env 0 i)
-                                           (funcall (the eval-closure val*) new-env)))
-                            (progv
-                                special-vars
-                                (loop for val* in special-vals*
-                                      collect (funcall (the eval-closure val*) new-env))
-                              (funcall body* new-env))))
-                        (lambda (env)
-                          (with-dynamic-extent-environment (new-env env varnum)
-                            (loop for i from 0 below varnum
-                                  for val* in lexical-values*
-                                  do (setf (environment-value new-env 0 i)
-                                           (funcall (the eval-closure val*) new-env)))
-                            (progv
-                                special-vars
-                                (loop for val* in special-vals*
-                                      collect (funcall (the eval-closure val*) new-env))
-                              (funcall body* new-env))))))))))
+                (labels ((build-nested-let (bindings)
+                           (if (null bindings)
+                               `(progn ,@body)
+                               (let* ((binding-form (first bindings))
+                                      (var (if (listp binding-form) (first binding-form) binding-form))
+                                      (val (if (listp binding-form) (second binding-form) nil)))
+                                 `(let ((,var ,val))
+                                    (declare (special
+                                              ,@(if (or (member var specials) (globally-special-p var))
+                                                    (list var)
+                                                    nil)))
+                                    ,(build-nested-let (rest bindings)))))))
+                  (prepare-form (build-nested-let bindings) context)))))
            ((load-time-value)
             (let ((load-form (cadr form)))
               ;; FIXME
