@@ -282,6 +282,8 @@
         (assume-special context var)
         (lambda (env)
           (declare (ignore env))
+          (unless (boundp var)
+            (error 'unbound-variable :name var))
           (symbol-value var)))))
 
 
