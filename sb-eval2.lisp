@@ -740,7 +740,7 @@
 
 (defun prevent-constant-modification (var)
   (when (globally-constant-p var)
-    (error "~S is a constant and thus can't be set." var)))
+    (warn "~S is a constant and thus can't be set." var)))
 
 (defvar *mode* :not-compile-time)
 
