@@ -761,12 +761,13 @@
                 (symbol
                  (prepare-function-ref fun-form context))
                 (cons
-                 (ecase (first fun-form)
+                 (case (first fun-form)
                    ((lambda)
                     (prepare-lambda (rest fun-form) context))
                    ((sb-int:named-lambda)
                     (prepare-lambda (cddr fun-form) context))
-                   ((setf sb-pcl::slot-accessor)
+                   (t
+                    (assert (sb-int:valid-function-name-p fun-form))
                     (prepare-function-ref fun-form context)))))))
            ((lambda)
             (prepare-lambda (rest form) context))
