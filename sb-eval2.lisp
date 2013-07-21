@@ -603,8 +603,8 @@
                         missing-optionals
                           (unless (>= argi required-num)
                             (error 'sb-int:simple-program-error
-                                   :format-control "invalid number of arguments: ~D"
-                                   :format-arguments (list (length args))))
+                                   :format-control "invalid number of arguments: ~D (expected: >=~D)"
+                                   :format-arguments (list (length args) required-num)))
                           (when (>= i (the fixnum (+ required-num
                                                      optional-num)))
                             (go rest))
@@ -625,8 +625,8 @@
                           (unless keyp
                             (unless (or restp (= argi (length args)))
                               (error 'sb-int:simple-program-error
-                                     :format-control "invalid number of arguments: ~D"
-                                     :format-arguments (list (length args))))
+                                     :format-control "invalid number of arguments: ~D (expected: <=~D)"
+                                     :format-arguments (list (length args) (+ required-num optional-num))))
                             (go aux))
                           (unless (evenp restnum)
                             (error 'sb-int:simple-program-error
