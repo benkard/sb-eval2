@@ -725,7 +725,8 @@
   (eq :special (sb-int:info :variable :kind var)))
 
 (defun assume-special (context var)
-  (unless (context-var-special-p context var)
+  (unless (or (globally-special-p var)
+              (context-var-special-p context var))
     (warn 'simple-warning
           :format-control "Undefined variable: ~S"
           :format-arguments (list var))))
