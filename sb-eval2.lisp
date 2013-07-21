@@ -278,13 +278,17 @@
           (env-lexical
            (lambda (env)
              (environment-value env nesting offset)))))
-      (progn
-        (assume-special context var)
-        (lambda (env)
-          (declare (ignore env))
-          (unless (boundp var)
-            (error 'unbound-variable :name var))
-          (symbol-value var)))))
+      (if (globally-constant-p var)
+          (lambda (env)
+            (declare (ignore env))
+            (symbol-value var))
+          (progn
+            (assume-special context var)
+            (lambda (env)
+              (declare (ignore env))
+              (unless (boundp var)
+                (error 'unbound-variable :name var))
+              (symbol-value var))))))
 
 
 (defun body-decls&forms (exprs)
@@ -724,12 +728,19 @@
 (defun globally-special-p (var)
   (eq :special (sb-int:info :variable :kind var)))
 
+(defun globally-constant-p (var)
+  (eq :constant (sb-int:info :variable :kind var)))
+
 (defun assume-special (context var)
   (unless (or (globally-special-p var)
               (context-var-special-p context var))
     (warn 'simple-warning
           :format-control "Undefined variable: ~S"
           :format-arguments (list var))))
+
+(defun prevent-constant-modification (var)
+  (when (globally-constant-p var)
+    (error "~S is a constant and thus can't be set." var)))
 
 (defvar *mode* :not-compile-time)
 
@@ -787,6 +798,7 @@
                                       (context-find-lexical context var))
                                      (t
                                       (assume-special context var)
+                                      (prevent-constant-modification var)
                                       :special))
                             collect (prepare-form valform context))))
                 (lambda (env)
