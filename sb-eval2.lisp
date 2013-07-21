@@ -95,7 +95,7 @@
          (cons
           (destructuring-bind (a . b) x
             (case a
-              ((lambda)
+              ((lambda sb-int:named-lambda)
                (when (maybe-references-p/env form vars env)
                  (return-from maybe-closes-over-p/env t)))
               ((flet labels)
