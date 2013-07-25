@@ -10,6 +10,8 @@
 
 (defconstant +stack-max+ 8)
 
+(defvar *mode* :not-compile-time)
+
 (defmacro specialize (var value possible-values &body body)
   `(ecase ,value
      ,@(loop for x in (cl:eval possible-values)
@@ -741,8 +743,6 @@
 (defun prevent-constant-modification (var)
   (when (globally-constant-p var)
     (warn "~S is a constant and thus can't be set." var)))
-
-(defvar *mode* :not-compile-time)
 
 (declaim (ftype (function (* context &optional symbol) eval-closure) prepare-form))
 (defun prepare-form (form context &optional (mode *mode*) &aux (*mode* :execute))
