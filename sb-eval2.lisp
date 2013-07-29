@@ -11,6 +11,9 @@
 (defconstant +stack-max+ 8)
 
 (defvar *mode* :not-compile-time)
+(defvar *form*)
+(defvar *source-paths* (make-hash-table :weakness :key :test #'eq))
+(defvar *source-info* (make-hash-table :weakness :key :test #'eq))
 
 (defmacro specialize (var value possible-values &body body)
   `(ecase ,value
@@ -270,6 +273,28 @@
     (setq env (environment-parent env)))
   (setf (svref (environment-data env) offset) val))
 
+
+(defun source-path (eval-closure)
+  (gethash eval-closure *source-paths*))
+(defun source-info (eval-closure)
+  (gethash eval-closure *source-info*))
+(defun (setf source-path) (val eval-closure)
+  (setf (gethash eval-closure *source-paths*) val))
+(defun (setf source-info) (val eval-closure)
+  (setf (gethash eval-closure *source-info*) val))
+
+
+(defun annotate-lambda-with-source (closure)
+  (when (and (boundp 'sb-c::*current-path*)
+             (boundp 'sb-c::*source-info*))
+    (setf (source-path closure) sb-c::*current-path*)
+    (setf (source-info closure) sb-c::*source-info*))
+  closure)
+
+(defmacro eval-lambda (lambda-list &body body)
+  `(annotate-lambda-with-source (lambda ,lambda-list ,@body)))
+
+
 (declaim (ftype (function (symbol context) eval-closure) prepare-ref))
 (defun prepare-ref (var context)
   (if (context-var-lexical-p context var)
@@ -278,15 +303,15 @@
              (offset (lexical-offset lexical)))
         (etypecase lexical
           (env-lexical
-           (lambda (env)
+           (eval-lambda (env)
              (environment-value env nesting offset)))))
       (if (globally-constant-p var)
-          (lambda (env)
+          (eval-lambda (env)
             (declare (ignore env))
             (symbol-value var))
           (progn
             (assume-special context var)
-            (lambda (env)
+            (eval-lambda (env)
               (declare (ignore env))
               (unless (boundp var)
                 (error 'unbound-variable :name var))
@@ -319,10 +344,10 @@
       (let* ((lexical (context-find-lexical context `(function ,function-name)))
              (nesting (lexical-nesting lexical))
              (offset  (lexical-offset lexical)))
-        (lambda (env)
+        (eval-lambda (env)
           (environment-value env nesting offset)))
       (let ((f* (sb-c::fdefinition-object function-name t)))
-        (lambda (env)
+        (eval-lambda (env)
           (declare (ignore env))
           (or (sb-c::fdefn-fun f*)
               (error 'undefined-function :name function-name))))))
@@ -338,7 +363,7 @@
 
 (declaim (ftype (function () eval-closure) prepare-nil))
 (defun prepare-nil ()
-  (lambda (env) (declare (ignore env))))
+  (eval-lambda (env) (declare (ignore env))))
 
 (declaim (ftype (function ((or symbol list) list context) eval-closure) prepare-local-call))
 (defun prepare-local-call (f args context)
@@ -353,11 +378,11 @@
             `(let ,(loop for var in argvars
                          for i from 0 below m%
                          collect `(,var (nth ,i args*)))
-               (lambda (env)
+               (eval-lambda (env)
                  (funcall (the function (environment-value env nesting offset))
                           ,@(loop for var in argvars
                                   collect `(funcall (the eval-closure ,var) env)))))))
-        (lambda (env)
+        (eval-lambda (env)
           (apply (the function (environment-value env nesting offset))
                  (mapcar (lambda (x) (funcall (the eval-closure x) env)) args*))))))
 
@@ -372,13 +397,13 @@
             `(let ,(loop for var in argvars
                          for i from 0 below m%
                          collect `(,var (nth ,i args*)))
-               (lambda (env)
+               (eval-lambda (env)
                  (declare (ignorable env))
                  (funcall (or (sb-c::fdefn-fun f*)
                               (error 'undefined-function :name f))
                           ,@(loop for var in argvars
                                   collect `(funcall (the eval-closure ,var) env)))))))
-        (lambda (env)
+        (eval-lambda (env)
           (apply (or (sb-c::fdefn-fun f*)
                      (error 'undefined-function :name f))
                  (mapcar (lambda (x) (funcall (the eval-closure x) env))
@@ -387,7 +412,7 @@
 (declaim (ftype (function (eval-closure list context) eval-closure) prepare-direct-call))
 (defun prepare-direct-call (f args context)
   (let ((args* (mapcar (lambda (form) (prepare-form form context)) args)))
-    (lambda (env)
+    (eval-lambda (env)
       (apply (the (or symbol function) (funcall (the eval-closure f) env))
              (mapcar (lambda (x) (funcall (the eval-closure x) env)) args*)))))
 
@@ -400,7 +425,7 @@
         (prepare-nil)
         (let ((forms* (butlast body*))
               (last-form* (first (last body*))))
-          (lambda (env)
+          (eval-lambda (env)
             (dolist (form* forms*)
               (funcall (the eval-closure form*) env))
             (funcall (the eval-closure last-form*) env))))))
@@ -688,12 +713,12 @@
                             (funcall body* new-env)))))))
               ;;(declare (inline handle-arguments))  ;crashes the compiler! lp#1203260
               (if envp
-                  (lambda (env)
+                  (eval-lambda (env)
                     (lambda (&rest args)
                       (declare (dynamic-extent args))
                       (let ((new-env (make-environment env varnum)))
                         (apply #'handle-arguments new-env args))))
-                  (lambda (env)
+                  (eval-lambda (env)
                     (lambda (&rest args)
                       (declare (dynamic-extent args))
                       (with-dynamic-extent-environment (new-env env varnum)
@@ -745,13 +770,18 @@
     (warn "~S is a constant and thus can't be set." var)))
 
 (declaim (ftype (function (* context &optional symbol) eval-closure) prepare-form))
-(defun prepare-form (form context &optional (mode *mode*) &aux (*mode* :execute))
+(defun prepare-form (form context &optional (mode *mode*)
+                                  &aux (*mode* :execute)
+                                       (*form* form)
+                                       (sb-c::*current-path*
+                                        (when (boundp 'sb-c::*source-paths*)
+                                          (sb-c::ensure-source-path form))))
   ;;(declare (optimize speed (safety 0) (space 1) (debug 0)))
   ;;(print form)
   (values
    (cond
      ((sb-int:self-evaluating-p form)
-      (lambda (env) (declare (ignore env)) form))
+      (eval-lambda (env) (declare (ignore env)) form))
      (t
       (etypecase form
         (symbol
@@ -766,7 +796,7 @@
               (let ((a* (prepare-form a context))
                     (b* (prepare-form b context))
                     (c* (prepare-form c context)))
-                (lambda (env) (if (funcall a* env) (funcall b* env) (funcall c* env))))))
+                (eval-lambda (env) (if (funcall a* env) (funcall b* env) (funcall c* env))))))
            ((function)
             (let ((fun-form (second form)))
               (etypecase fun-form
@@ -801,7 +831,7 @@
                                       (prevent-constant-modification var)
                                       :special))
                             collect (prepare-form valform context))))
-                (lambda (env)
+                (eval-lambda (env)
                   (loop for (var info val*) on bindings by #'cdddr
                         for value = (funcall (the eval-closure val*) env)
                         for result =
@@ -820,14 +850,14 @@
             (destructuring-bind (tag &body body) (rest form)
               (let ((tag* (prepare-form tag context))
                     (body* (prepare-progn body context)))
-                (lambda (env)
+                (eval-lambda (env)
                   (catch (funcall tag* env)
                     (funcall body* env))))))
            ((block)
             (destructuring-bind (name &body body) (rest form)
               (let* ((tag (gensym (concatenate 'string "BLOCK-" (symbol-name name))))
                      (body* (prepare-progn body (context-add-block-tag context name tag))))
-                (lambda (env)
+                (eval-lambda (env)
                   (catch tag
                     (funcall body* env))))))
            ((declare)
@@ -877,7 +907,7 @@
                        (body* (prepare-progn body
                                              (context-add-specials new-context
                                                                    specials))))
-                  (lambda (env)
+                  (eval-lambda (env)
                     (let ((new-env (make-environment env n)))
                       (loop for i from 0 to n
                             for f in functions
@@ -898,7 +928,7 @@
                        (n (length functions))
                        (body* (prepare-progn body (context-add-specials new-context
                                                                         specials))))
-                  (lambda (env)
+                  (eval-lambda (env)
                     (let ((new-env (make-environment env n)))
                       (loop for i from 0 to n
                             for f in functions
@@ -936,7 +966,7 @@
                                                 new-context
                                                 specials))))
                     (if envp
-                        (lambda (env)
+                        (eval-lambda (env)
                           (let ((new-env (make-environment env varnum))
                                 (slav-laiceps (list)))
                             (loop with i fixnum = 0
@@ -952,7 +982,7 @@
                                 srav-laiceps
                                 slav-laiceps
                               (funcall body* new-env))))
-                        (lambda (env)
+                        (eval-lambda (env)
                           (with-dynamic-extent-environment (new-env env varnum)
                             (let ((slav-laiceps (list)))
                               (loop with i fixnum = 0
@@ -998,7 +1028,7 @@
             (destructuring-bind (f &rest argforms) (rest form)
               (let ((f* (prepare-form f context))
                     (argforms* (mapcar (lambda (x) (prepare-form x context)) argforms)))
-                (lambda (env)
+                (eval-lambda (env)
                   (apply (funcall (the eval-closure f*) env)
                          (mapcan (lambda (arg)
                                    (multiple-value-list
@@ -1008,7 +1038,7 @@
             (destructuring-bind (values-form &body body) (rest form)
               (let ((values-form* (prepare-form values-form context))
                     (body*        (prepare-progn body context)))
-                (lambda (env)
+                (eval-lambda (env)
                   (multiple-value-prog1
                       (funcall values-form* env)
                     (funcall body* env))))))
@@ -1040,7 +1070,7 @@
                                       (context-add-env-lexicals context lexicals)
                                       specials))
                        (body*        (prepare-progn body new-context)))
-                  (lambda (env)
+                  (eval-lambda (env)
                     (let* ((new-env (make-environment env nlexicals))
                            (values  (multiple-value-list (funcall value-form* env))))
                       (progv our-specials '()
@@ -1059,19 +1089,19 @@
               (let ((vals* (prepare-form vals context))
                     (vars* (prepare-form vars context))
                     (body* (prepare-progn body context)))
-                (lambda (env)
+                (eval-lambda (env)
                   (progv (funcall vals* env) (funcall vars* env)
                     (funcall body* env))))))
            ((quote)
             (let ((quoted-object (cadr form)))
-              (lambda (env)
+              (eval-lambda (env)
                 (declare (ignore env))
                 quoted-object)))
            ((return-from)
             (destructuring-bind (name &optional value) (rest form)
               (let ((value* (prepare-form value context))
                     (tag    (context-block-tag context name)))
-                (lambda (env)
+                (eval-lambda (env)
                   (throw tag (funcall value* env))))))
            ((the)
             (prepare-form (third form) context))
@@ -1079,13 +1109,13 @@
             (destructuring-bind (tag result) (rest form)
               (let ((tag*    (prepare-form tag    context))
                     (result* (prepare-form result context)))
-                (lambda (env)
+                (eval-lambda (env)
                   (throw (funcall tag* env) (funcall result* env))))))
            ((unwind-protect)
             (destructuring-bind (protected &body body) (rest form)
               (let ((protected* (prepare-form  protected context))
                     (body*      (prepare-progn body      context)))
-                (lambda (env)
+                (eval-lambda (env)
                   (unwind-protect (funcall protected* env)
                     (funcall body* env))))))
            ((sb-ext:truly-the)
@@ -1132,7 +1162,7 @@
            ((go)
             (let* ((go-tag    (second form))
                    (catch-tag (context-find-go-tag context go-tag)))
-              (lambda (env)
+              (eval-lambda (env)
                 (declare (ignore env))
                 (throw catch-tag go-tag))))
            ((tagbody)
@@ -1145,7 +1175,7 @@
                                                (destructuring-bind (tag . body) x
                                                  (cons tag (prepare-progn body new-context))))
                                              tags-and-bodies)))
-              (lambda (env)
+              (eval-lambda (env)
                 (block tagbody-loop
                   (let ((code tags-and-bodies*))
                     (loop
