@@ -14,6 +14,8 @@
 (defvar *form*)
 (defvar *source-paths* (make-hash-table :weakness :key :test #'eq))
 (defvar *source-info* (make-hash-table :weakness :key :test #'eq))
+(defvar *source-locations* (make-hash-table :weakness :key :test #'eq))
+(defvar *closure-tags* (make-hash-table :weakness :key :test #'eq))
 
 (defmacro specialize (var value possible-values &body body)
   `(ecase ,value
@@ -278,21 +280,34 @@
   (gethash eval-closure *source-paths*))
 (defun source-info (eval-closure)
   (gethash eval-closure *source-info*))
+(defun source-location (eval-closure)
+  (gethash eval-closure *source-locations*))
 (defun (setf source-path) (val eval-closure)
   (setf (gethash eval-closure *source-paths*) val))
 (defun (setf source-info) (val eval-closure)
   (setf (gethash eval-closure *source-info*) val))
+(defun (setf source-location) (val eval-closure)
+  (setf (gethash eval-closure *source-locations*) val))
 
 
-(defun annotate-lambda-with-source (closure)
+(defun annotate-lambda-with-source (closure tag)
   (when (and (boundp 'sb-c::*current-path*)
              (boundp 'sb-c::*source-info*))
-    (setf (source-path closure) sb-c::*current-path*)
-    (setf (source-info closure) sb-c::*source-info*))
+    (setf (source-path tag) sb-c::*current-path*)
+    (setf (source-info tag) sb-c::*source-info*)
+    (setf (source-location tag) (sb-c::make-definition-source-location)))
   closure)
 
 (defmacro eval-lambda (lambda-list &body body)
-  `(annotate-lambda-with-source (lambda ,lambda-list ,@body)))
+  (let ((gtag (gensym)))
+    `(let ((,gtag (gensym)))
+       (annotate-lambda-with-source
+        (let ((%%%eval-closure-tag ,gtag))
+          (declare (ignorable %%%eval-closure-tag))
+          (assert (symbolp %%%eval-closure-tag))
+          (sb-int:named-lambda eval-closure
+            ,lambda-list ,@body))
+        ,gtag))))
 
 
 (declaim (ftype (function (symbol context) eval-closure) prepare-ref))
